@@ -1,0 +1,18 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+
+# archivos locales de prueba
+*.pdf
+*.docx
+*.json
+
+# herramientas internas
+.claude/
