@@ -1,0 +1,328 @@
+{
+  "_metadata": {
+    "source": "DOTD Louisiana Road Design Manual (current edition) + AASHTO Green Book (7th ed.)",
+    "scope": "Interstate / Urban Freeway — geometric design validation",
+    "units": "Imperial (mph, ft, %)",
+    "last_reviewed": "2026-06",
+    "reviewed_by": "Francisco - I-10 Calcasieu River Bridge Project Engineer"
+  },
+
+  "design_speed": {
+    "description": "Velocidades de diseño por clasificación funcional (mph)",
+    "functional_classes": {
+      "Interstate_Rural": {
+        "minimum": 70,
+        "desirable": 75,
+        "maximum": 80
+      },
+      "Interstate_Urban": {
+        "minimum": 55,
+        "desirable": 65,
+        "maximum": 70
+      },
+      "Freeway_Rural": {
+        "minimum": 60,
+        "desirable": 70,
+        "maximum": 75
+      },
+      "Freeway_Urban": {
+        "minimum": 50,
+        "desirable": 60,
+        "maximum": 70
+      }
+    }
+  },
+
+  "horizontal_alignment": {
+    "description": "Radios mínimos de curvatura horizontal por velocidad de diseño",
+    "note": "Basados en emax = 8 % (AASHTO Table 3-7); e_max = 6 % para entornos urbanos",
+    "minimum_radius_ft": {
+      "50_mph": {
+        "emax_4pct": 1190,
+        "emax_6pct": 996,
+        "emax_8pct": 833
+      },
+      "55_mph": {
+        "emax_4pct": 1560,
+        "emax_6pct": 1295,
+        "emax_8pct": 1090
+      },
+      "60_mph": {
+        "emax_4pct": 2050,
+        "emax_6pct": 1635,
+        "emax_8pct": 1390
+      },
+      "65_mph": {
+        "emax_4pct": 2500,
+        "emax_6pct": 2050,
+        "emax_8pct": 1740
+      },
+      "70_mph": {
+        "emax_4pct": 3050,
+        "emax_6pct": 2500,
+        "emax_8pct": 2130
+      },
+      "75_mph": {
+        "emax_4pct": 3700,
+        "emax_6pct": 3050,
+        "emax_8pct": 2580
+      },
+      "80_mph": {
+        "emax_4pct": 4400,
+        "emax_6pct": 3600,
+        "emax_8pct": 3050
+      }
+    }
+  },
+
+  "superelevation": {
+    "description": "Superelevación máxima (emax) por contexto",
+    "values_pct": {
+      "rural_highway": 8,
+      "urban_freeway": 6,
+      "urban_with_curb": 4
+    },
+    "normal_crown_pct": 2.0,
+    "transition_method": "AASHTO axis-of-rotation — edge of traveled way",
+    "max_relative_gradient_pct": {
+      "50_mph": 0.45,
+      "55_mph": 0.45,
+      "60_mph": 0.40,
+      "65_mph": 0.40,
+      "70_mph": 0.35,
+      "75_mph": 0.35,
+      "80_mph": 0.35
+    }
+  },
+
+  "lane_width": {
+    "description": "Anchos de carril por tipo de vía (ft)",
+    "Interstate_Rural": {
+      "standard": 12,
+      "minimum": 12
+    },
+    "Interstate_Urban": {
+      "standard": 12,
+      "minimum": 11
+    },
+    "Freeway_Rural": {
+      "standard": 12,
+      "minimum": 12
+    },
+    "Freeway_Urban": {
+      "standard": 12,
+      "minimum": 11
+    },
+    "ramp_single_lane": {
+      "standard": 14,
+      "minimum": 14
+    },
+    "ramp_dual_lane": {
+      "standard": 12,
+      "minimum": 12
+    }
+  },
+
+  "shoulder_width": {
+    "description": "Anchos de hombro por tipo de vía y posición (ft)",
+    "Interstate_Rural": {
+      "right_shoulder_standard": 10,
+      "right_shoulder_minimum": 10,
+      "left_shoulder_standard": 4,
+      "left_shoulder_minimum": 4,
+      "note": "DOTD requires full 10-ft right shoulder on all new Interstate construction"
+    },
+    "Interstate_Urban": {
+      "right_shoulder_standard": 10,
+      "right_shoulder_minimum": 8,
+      "right_shoulder_minimum_note": "pending_confirmation: investigating I-10 project specific requirements",
+      "left_shoulder_standard": 4,
+      "left_shoulder_minimum": 2
+    },
+    "Freeway_Rural": {
+      "right_shoulder_standard": 10,
+      "right_shoulder_minimum": 8,
+      "left_shoulder_standard": 4,
+      "left_shoulder_minimum": 2
+    },
+    "Freeway_Urban": {
+      "right_shoulder_standard": 8,
+      "right_shoulder_minimum": 6,
+      "left_shoulder_standard": 4,
+      "left_shoulder_minimum": 2
+    },
+    "paved_shoulder_surface_type": "Asphalt or concrete matching mainline",
+    "shoulder_cross_slope_pct": {
+      "paved": 2.0,
+      "gravel": 4.0,
+      "turf": 6.0
+    }
+  },
+
+  "grade": {
+    "description": "Pendiente longitudinal máxima por velocidad de diseño y terreno (%)",
+    "note": "DOTD / AASHTO Green Book Table 5-3. Valores para carreteras principales (Freeway/Interstate).",
+    "max_grade_pct": {
+      "50_mph": {
+        "level":   5,
+        "rolling": 6,
+        "mountainous": 8
+      },
+      "55_mph": {
+        "level":   4,
+        "rolling": 5,
+        "mountainous": 7
+      },
+      "60_mph": {
+        "level":   4,
+        "rolling": 5,
+        "mountainous": 7
+      },
+      "65_mph": {
+        "level":   3,
+        "rolling": 4,
+        "mountainous": 6
+      },
+      "70_mph": {
+        "level":   3,
+        "rolling": 4,
+        "mountainous": 6
+      },
+      "75_mph": {
+        "level":   3,
+        "rolling": 4,
+        "mountainous": 5
+      },
+      "80_mph": {
+        "level":   3,
+        "rolling": 4,
+        "mountainous": 5
+      }
+    },
+    "minimum_grade_pct": 0.3,
+    "minimum_grade_curbed_section_pct": 0.5,
+    "maximum_ramp_grade_pct": 7,
+    "maximum_loop_ramp_grade_pct": 8
+  },
+
+  "stopping_sight_distance": {
+    "description": "Distancia de visibilidad de parada (SSD) por velocidad de diseño (ft)",
+    "source": "AASHTO Green Book 2018, Table 3-1 / DOTD RDM",
+    "note": "Valores para pavimento mojado, coeficiente de fricción conforme a AASHTO",
+    "values_ft": {
+      "50_mph": 425,
+      "55_mph": 495,
+      "60_mph": 570,
+      "65_mph": 645,
+      "70_mph": 730,
+      "75_mph": 820,
+      "80_mph": 910
+    },
+    "decision_sight_distance_ft": {
+      "avoidance_A_rural_stop": {
+        "50_mph": 700,
+        "55_mph": 800,
+        "60_mph": 900,
+        "65_mph": 1000,
+        "70_mph": 1100,
+        "75_mph": 1200,
+        "80_mph": 1300
+      },
+      "avoidance_B_rural_maneuver": {
+        "50_mph": 1000,
+        "55_mph": 1100,
+        "60_mph": 1200,
+        "65_mph": 1350,
+        "70_mph": 1450,
+        "75_mph": 1600,
+        "80_mph": 1750
+      }
+    }
+  },
+
+  "cross_slope": {
+    "description": "Pendiente transversal normal de la calzada (cross slope)",
+    "note": "Sección en tangente sin superelevación aplicada",
+    "pavement_type": {
+      "asphalt_concrete": {
+        "standard_pct": 2.0,
+        "minimum_pct": 1.5,
+        "maximum_pct": 2.0
+      },
+      "portland_cement_concrete": {
+        "standard_pct": 1.5,
+        "minimum_pct": 1.5,
+        "maximum_pct": 2.0
+      }
+    },
+    "median_cross_slope_pct": {
+      "paved_median": 2.0,
+      "unpaved_median_max": 10.0
+    },
+    "gutter_cross_slope_pct": {
+      "standard": 8.33,
+      "note": "1:12 toward curb for curbed sections"
+    }
+  },
+
+  "vertical_alignment": {
+    "description": "Parámetros de curvas verticales",
+    "k_values_crest": {
+      "description": "Valor K mínimo para curvas verticales convexas (SSD control)",
+      "50_mph": 84,
+      "55_mph": 114,
+      "60_mph": 151,
+      "65_mph": 193,
+      "70_mph": 247,
+      "75_mph": 312,
+      "80_mph": 384
+    },
+    "k_values_sag": {
+      "description": "Valor K mínimo para curvas verticales cóncavas (headlight control)",
+      "50_mph": 96,
+      "55_mph": 115,
+      "60_mph": 136,
+      "65_mph": 157,
+      "70_mph": 181,
+      "75_mph": 206,
+      "80_mph": 236
+    },
+    "min_length_vertical_curve_ft": 100,
+    "min_length_formula": "L = max(3 * design_speed_mph, 100 ft)"
+  },
+
+  "clear_zone": {
+    "description": "Zona libre lateral (Clear Zone) desde borde de carril (ft)",
+    "source": "AASHTO Roadside Design Guide + DOTD RDM Chapter 6",
+    "values_ft": {
+      "50_mph": {
+        "fill_slope_1V_4H_or_flatter": 24,
+        "fill_slope_1V_3H": 20,
+        "fill_slope_1V_2H": 16
+      },
+      "60_mph": {
+        "fill_slope_1V_4H_or_flatter": 28,
+        "fill_slope_1V_3H": 24,
+        "fill_slope_1V_2H": 18
+      },
+      "70_mph": {
+        "fill_slope_1V_4H_or_flatter": 32,
+        "fill_slope_1V_3H": 28,
+        "fill_slope_1V_2H": 20
+      }
+    }
+  },
+
+  "validation_thresholds": {
+    "description": "Tolerancias para flags de validación automática",
+    "radius_deficiency_warn_pct": 5,
+    "radius_deficiency_fail_pct": 10,
+    "grade_warn_pct": 90,
+    "grade_fail_pct": 100,
+    "ssd_deficiency_warn_pct": 5,
+    "ssd_deficiency_fail_pct": 15,
+    "lane_width_warn_ft": 0.25,
+    "lane_width_fail_ft": 0.5,
+    "superelevation_tolerance_pct": 0.5
+  }
+}

@@ -13,6 +13,7 @@ build/
 *.pdf
 *.docx
 *.json
+!app/data/dotd_parameters.json
 
 # herramientas internas
 .claude/
