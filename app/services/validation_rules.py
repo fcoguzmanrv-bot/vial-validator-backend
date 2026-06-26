@@ -28,6 +28,34 @@ _KW_INVERTED_SUPER = re.compile(
     re.IGNORECASE,
 )
 
+# Curvas compuestas — el LLM usa este prefijo en `parameter`
+_KW_COMPOUND = re.compile(
+    r"curva\s*compuesta|compound\s*curve|cambio\s*(brusco\s*de\s*)?curvatura|"
+    r"relaci[oó]n\s*de\s*radios|radio\s*ratio",
+    re.IGNORECASE,
+)
+
+# Broken-back — el LLM usa este prefijo en `parameter`
+_KW_BROKEN_BACK = re.compile(
+    r"broken[- ]?back|curva[s]?\s*back[- ]?to[- ]?back|"
+    r"tangente\s*(corta|insuficiente)\s*(entre\s*curvas?)?|"
+    r"curvas?\s*(misma\s*direcci[oó]n|consecutivas?\s*igual)",
+    re.IGNORECASE,
+)
+
+# Detecta si el contexto es una rampa para aplicar el umbral correcto
+_KW_RAMP = re.compile(r"\b(ramp[a]?|ramal|loop)\b", re.IGNORECASE)
+
+# Extrae R1 y R2 del found_value codificado por el LLM
+# Formato esperado: "R1=2500ft, R2=800ft, ratio=3.13"
+_RE_R1 = re.compile(r"R1\s*=\s*([\d,.]+)\s*ft", re.IGNORECASE)
+_RE_R2 = re.compile(r"R2\s*=\s*([\d,.]+)\s*ft", re.IGNORECASE)
+
+# Extrae tangente y velocidad del found_value para broken-back
+# Formato esperado: "tangente=650ft, V=65mph, 15V=975ft"
+_RE_TANGENT = re.compile(r"tangente\s*=\s*([\d,.]+)\s*ft", re.IGNORECASE)
+_RE_SPEED = re.compile(r"V\s*=\s*([\d]+)\s*mph", re.IGNORECASE)
+
 # Valores que representan 0 %
 _ZERO_VALUE = re.compile(r"^\s*[+\-]?0+(\.0+)?\s*%?\s*$")
 
@@ -182,10 +210,141 @@ def apply_inverted_superelevation_rule(
     return observations
 
 
+def _parse_float(text: str) -> float | None:
+    """Convierte '2,500' o '2500' a float; devuelve None si falla."""
+    try:
+        return float(text.replace(",", ""))
+    except (ValueError, AttributeError):
+        return None
+
+
+# ── Umbrales curvas compuestas (DOTD RDM Section 4.2.1) ──────────────────────
+_COMPOUND_RATIO_MAIN_WARN  = 1.5   # carretera principal → moderado
+_COMPOUND_RATIO_RAMP_WARN  = 2.0   # rampa               → moderado
+_COMPOUND_RATIO_HARD_CRIT  = 3.0   # cualquier caso      → critico
+
+
+def apply_compound_curve_rule(
+    observations: list[AASHTOObservation],
+) -> list[AASHTOObservation]:
+    """
+    Normaliza observaciones de curvas compuestas que el LLM haya detectado.
+    Extrae R1/R2 del found_value y recalcula la severidad de forma determinista.
+
+    Umbrales (DOTD RDM §4.2.1):
+      R1/R2 > 3.0 (cualquier caso)  → critico
+      R1/R2 > 2.0 en rampas         → moderado
+      R1/R2 > 1.5 en vía principal  → moderado
+    """
+    for obs in observations:
+        if not _KW_COMPOUND.search(obs.parameter):
+            continue
+
+        obs.complies = False
+
+        # Intentar extraer R1 y R2 para verificación numérica independiente
+        m_r1 = _RE_R1.search(obs.found_value)
+        m_r2 = _RE_R2.search(obs.found_value)
+        r1 = _parse_float(m_r1.group(1)) if m_r1 else None
+        r2 = _parse_float(m_r2.group(1)) if m_r2 else None
+
+        is_ramp = bool(_KW_RAMP.search(obs.parameter))
+        warn_threshold = _COMPOUND_RATIO_RAMP_WARN if is_ramp else _COMPOUND_RATIO_MAIN_WARN
+
+        if r1 is not None and r2 is not None and r2 > 0:
+            ratio = round(r1 / r2, 2)
+            if ratio >= _COMPOUND_RATIO_HARD_CRIT:
+                severity = "critico"
+            elif ratio > warn_threshold:
+                severity = "moderado"
+            else:
+                # El LLM lo marcó como problema pero el ratio no supera umbral;
+                # confiar en el LLM pero bajar a informativo.
+                severity = "informativo"
+
+            obs.severity = severity
+            obs.normative_value = (
+                f"DOTD RDM §4.2.1 horizontal_alignment — "
+                f"ratio máximo {'2.0:1 (rampas)' if is_ramp else '1.5:1 (vía principal)'}; "
+                f"3.0:1 en cualquier caso."
+            )
+            obs.observation = (
+                f"CAMBIO BRUSCO DE CURVATURA: Relación de radios R1/R2 = {ratio} "
+                f"supera el máximo de {warn_threshold}:1 "
+                f"(DOTD RDM Section 4.2.1). "
+                f"Riesgo de velocidad inconsistente para el conductor."
+                + (f" — {obs.observation}" if obs.observation else "")
+            )
+        else:
+            # Sin datos numéricos: conservar lo que reportó el LLM pero garantizar
+            # severidad mínima.
+            if obs.severity not in ("critico", "moderado"):
+                obs.severity = "moderado"
+            obs.normative_value = obs.normative_value or (
+                "DOTD RDM §4.2.1: ratio máximo 1.5:1 (vía principal) / "
+                "2.0:1 (rampas) / 3.0:1 (límite absoluto)."
+            )
+
+    return observations
+
+
+# ── Umbrales broken-back (DOTD RDM Section 4.2.1) ────────────────────────────
+_BROKEN_BACK_FACTOR = 15  # tangente mínima = 15 × V (mph) en ft
+
+
+def apply_broken_back_rule(
+    observations: list[AASHTOObservation],
+) -> list[AASHTOObservation]:
+    """
+    Normaliza observaciones de curvas broken-back que el LLM haya detectado.
+    Extrae tangente y velocidad del found_value y recalcula la severidad.
+
+    Umbral (DOTD RDM §4.2.1):
+      tangente < 15 × V_mph → moderado
+      (La condición ya implica incumplimiento; no existe nivel crítico separado.)
+    """
+    for obs in observations:
+        if not _KW_BROKEN_BACK.search(obs.parameter):
+            continue
+
+        obs.complies = False
+
+        m_t = _RE_TANGENT.search(obs.found_value)
+        m_v = _RE_SPEED.search(obs.found_value)
+        tangent = _parse_float(m_t.group(1)) if m_t else None
+        speed   = _parse_float(m_v.group(1)) if m_v else None
+
+        if tangent is not None and speed is not None:
+            min_tangent = _BROKEN_BACK_FACTOR * speed
+            obs.severity = "moderado"
+            obs.normative_value = (
+                f"DOTD RDM §4.2.1: tangente mínima entre curvas en la misma dirección "
+                f"= 15 × V = 15 × {int(speed)} mph = {int(min_tangent)} ft."
+            )
+            obs.observation = (
+                f"CURVA BROKEN-BACK: Tangente entre curvas en la misma dirección "
+                f"= {int(tangent)} ft, menor a 15v = {int(min_tangent)} ft "
+                f"(DOTD RDM Section 4.2.1). "
+                f"Apariencia visual deficiente y operación errática."
+                + (f" — {obs.observation}" if obs.observation else "")
+            )
+        else:
+            if obs.severity not in ("critico", "moderado"):
+                obs.severity = "moderado"
+            obs.normative_value = obs.normative_value or (
+                "DOTD RDM §4.2.1: tangente mínima = 15 × V (mph) ft entre curvas "
+                "consecutivas en la misma dirección."
+            )
+
+    return observations
+
+
 def apply_all_rules(
     observations: list[AASHTOObservation],
 ) -> list[AASHTOObservation]:
     """Punto de entrada: aplica todas las reglas en orden."""
     observations = apply_drainage_zero_rule(observations)
     observations = apply_inverted_superelevation_rule(observations)
+    observations = apply_compound_curve_rule(observations)
+    observations = apply_broken_back_rule(observations)
     return observations

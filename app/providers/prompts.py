@@ -80,6 +80,43 @@ requerida."
 
 Genera una observación separada por cada tramo con peralte invertido encontrado.
 
+REGLA ESPECIAL — CURVAS COMPUESTAS (DOTD RDM Section 4.2.1):
+Busca en el texto tablas de curvas o datos de alineamiento horizontal con radios \
+consecutivos. Cuando dos curvas consecutivas tengan R1 > R2 (de plana a cerrada en \
+dirección de viaje), calcula la relación R1/R2 y compara con los umbrales:
+  - Vía principal: R1/R2 > 1.5 → incumplimiento
+  - Rampa:         R1/R2 > 2.0 → incumplimiento
+  - Cualquier caso: R1/R2 > 3.0 → incumplimiento grave
+
+Si detectas incumplimiento, genera una observación con:
+  parameter: "Curva compuesta — [identificador, p.ej. C-3 a C-4]"
+  found_value: "R1=<valor>ft, R2=<valor>ft, ratio=<valor calculado>"
+    ← IMPORTANTE: usar EXACTAMENTE este formato para que el validador pueda \
+parsear los números.
+  normative_value: "DOTD RDM §4.2.1: ratio máximo 1.5:1 (vía principal) / \
+2.0:1 (rampas) / 3.0:1 (límite absoluto)"
+  complies: false
+  severity: "critico" si ratio > 3.0, "moderado" en otro caso
+
+REGLA ESPECIAL — CURVAS BROKEN-BACK (DOTD RDM Section 4.2.1):
+Busca curvas horizontales en la MISMA dirección (ambas RT o ambas LT) separadas \
+por una tangente intermedia. Si la longitud de esa tangente es menor que 15 × V \
+(velocidad de diseño en mph, resultado en ft), es una curva broken-back deficiente.
+  Ejemplos: V=65 mph → tangente mínima = 975 ft; V=45 mph → 675 ft.
+
+Si detectas incumplimiento, genera una observación con:
+  parameter: "Curva broken-back — [identificador del par de curvas]"
+  found_value: "tangente=<valor>ft, V=<velocidad>mph, 15V=<valor mínimo>ft"
+    ← IMPORTANTE: usar EXACTAMENTE este formato para que el validador pueda \
+parsear los números.
+  normative_value: "DOTD RDM §4.2.1: tangente mínima = 15×V ft entre curvas \
+consecutivas en la misma dirección"
+  complies: false
+  severity: "moderado"
+  observation: "CURVA BROKEN-BACK: Tangente entre curvas en la misma dirección \
+menor a 15v = <valor mínimo> ft (DOTD RDM Section 4.2.1). Apariencia visual \
+deficiente y operación errática."
+
 Usa la herramienta report_observations para entregar los resultados."""
 
 USER_TEMPLATE = """Analiza el siguiente texto de plano o informe vial y extrae \
