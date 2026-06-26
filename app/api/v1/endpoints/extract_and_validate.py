@@ -3,6 +3,7 @@ from typing import Optional
 from app.services.pdf_service import extract_text_from_pdf
 from app.providers.factory import get_provider
 from app.schemas.aashto import ExtractAndValidateResponse
+from app.services.validation_rules import apply_all_rules
 
 router = APIRouter()
 
@@ -14,6 +15,7 @@ async def extract_and_validate(
 ):
     text, pages = await extract_text_from_pdf(file, page_range)
     observations = await get_provider().validate(text)
+    observations = apply_all_rules(observations)
     return ExtractAndValidateResponse(
         text=text,
         pages_extracted=pages,

@@ -8,6 +8,8 @@ class AASHTOObservation(BaseModel):
     normative_value: str
     complies: bool
     observation: Optional[str] = None
+    # "critico" | "moderado" | "informativo" | None (observaciones conformes)
+    severity: Optional[str] = None
 
 
 class ValidationRequest(BaseModel):
