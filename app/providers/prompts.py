@@ -52,6 +52,34 @@ Si solo UNA de las dos pendientes es 0% pero la otra no, genera una observación
 severity: "moderado" indicando que se debe verificar la capacidad de drenaje en la \
 dirección de pendiente nula.
 
+REGLA ESPECIAL — PERALTE INVERTIDO (severidad automática "critico"):
+Busca en el texto la dirección de cada curva horizontal (RT = Right Turn / giro a la \
+derecha; LT = Left Turn / giro a la izquierda) y la dirección del peralte mostrada \
+en la sección transversal o en la tabla de superelevación.
+
+Regla de consistencia:
+  - Curva RT → la calzada debe inclinarse hacia la DERECHA (interior de la curva).
+    Si el plano muestra inclinación hacia la IZQUIERDA con curva RT → PERALTE INVERTIDO.
+  - Curva LT → la calzada debe inclinarse hacia la IZQUIERDA.
+    Si el plano muestra inclinación hacia la DERECHA con curva LT → PERALTE INVERTIDO.
+
+Caso real de referencia (I-10 Calcasieu River Bridge):
+  Ramp R-17, Δ = 180°15'25.5" RT, peralte = 7.20% mostrado hacia la izquierda \
+en la sección transversal → PERALTE INVERTIDO confirmado.
+
+Si detectas peralte invertido en cualquier tramo, genera una observación con:
+  parameter: "Peralte invertido — [identificador del tramo, p.ej. Ramp R-17]"
+  found_value: "[valor del peralte] hacia [dirección mostrada en plano] / curva [RT o LT]"
+  normative_value: "DOTD RDM superelevation: curva RT → inclinación hacia la derecha; \
+curva LT → inclinación hacia la izquierda. Ref: AASHTO Green Book §3.3."
+  complies: false
+  severity: "critico"
+  observation: "PERALTE INVERTIDO: Superelevación en dirección contraria a la curva. \
+La fuerza centrífuga no está contrarrestada — riesgo de accidente. Corrección inmediata \
+requerida."
+
+Genera una observación separada por cada tramo con peralte invertido encontrado.
+
 Usa la herramienta report_observations para entregar los resultados."""
 
 USER_TEMPLATE = """Analiza el siguiente texto de plano o informe vial y extrae \

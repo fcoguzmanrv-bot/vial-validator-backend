@@ -8,13 +8,23 @@ solo al LLM.
 import re
 from app.schemas.aashto import AASHTOObservation
 
-# Palabras clave que identifican cada familia de parámetro en el campo `parameter`
+# ── Patrones de parámetros ────────────────────────────────────────────────────
+
 _KW_LONG_GRADE = re.compile(
     r"pendiente\s*(longitudinal|long\.?)|longitudinal\s*grade|grade\s*longitudinal",
     re.IGNORECASE,
 )
 _KW_CROSS_SLOPE = re.compile(
     r"pendiente\s*(transversal|trans\.?|normal)|cross\s*slope|bombeo",
+    re.IGNORECASE,
+)
+
+# El LLM puede reportar peralte invertido con distintas formulaciones;
+# este patrón captura cualquiera de ellas para que Python las normalice.
+_KW_INVERTED_SUPER = re.compile(
+    r"peralte\s*invert|superelevaci[oó]n\s*invert|inverted\s*super|"
+    r"wrong[- ]?way\s*super|super.*direcci[oó]n.*contraria|"
+    r"peralte.*contrari|superelevaci[oó]n.*contrari",
     re.IGNORECASE,
 )
 
@@ -125,9 +135,57 @@ def apply_drainage_zero_rule(
     return observations + synthetic
 
 
+_INVERTED_SUPER_MSG = (
+    "PERALTE INVERTIDO: Superelevación en dirección contraria a la curva. "
+    "La fuerza centrífuga no está contrarrestada — riesgo de accidente. "
+    "Corrección inmediata requerida."
+)
+
+_INVERTED_SUPER_NORM = (
+    "DOTD RDM superelevation: la calzada debe inclinarse hacia el interior de la curva. "
+    "Curva RT → inclinación hacia la derecha. "
+    "Curva LT → inclinación hacia la izquierda. "
+    "Ref: AASHTO Green Book §3.3 / DOTD RDM horizontal_alignment."
+)
+
+
+def apply_inverted_superelevation_rule(
+    observations: list[AASHTOObservation],
+) -> list[AASHTOObservation]:
+    """
+    Normaliza cualquier observación de peralte invertido que el LLM haya reportado:
+    - Fuerza severity = "critico" y complies = False.
+    - Sustituye el mensaje de observación por el texto estándar si está ausente
+      o si el LLM usó una formulación distinta.
+    - Si el LLM no detectó ninguna pero dejó señales en found_value o observation
+      (p. ej. "izquierda" + "RT"), no se duplica — esa responsabilidad queda en
+      el prompt; aquí solo normalizamos lo ya detectado.
+    """
+    changed = False
+    for obs in observations:
+        if _KW_INVERTED_SUPER.search(obs.parameter) or (
+            obs.observation and _KW_INVERTED_SUPER.search(obs.observation)
+        ):
+            obs.complies = False
+            obs.severity = "critico"
+            obs.normative_value = _INVERTED_SUPER_NORM
+            # Preservar contexto específico del LLM (ramp id, valores) pero anteponer
+            # el mensaje estándar si aún no está presente.
+            if _INVERTED_SUPER_MSG not in (obs.observation or ""):
+                original_detail = obs.observation or ""
+                obs.observation = (
+                    f"{_INVERTED_SUPER_MSG}"
+                    + (f" — {original_detail}" if original_detail else "")
+                )
+            changed = True
+
+    return observations
+
+
 def apply_all_rules(
     observations: list[AASHTOObservation],
 ) -> list[AASHTOObservation]:
     """Punto de entrada: aplica todas las reglas en orden."""
     observations = apply_drainage_zero_rule(observations)
+    observations = apply_inverted_superelevation_rule(observations)
     return observations
