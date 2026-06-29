@@ -85,13 +85,50 @@
     "normal_crown_pct": 2.0,
     "transition_method": "AASHTO axis-of-rotation — edge of traveled way",
     "max_relative_gradient_pct": {
-      "50_mph": 0.45,
-      "55_mph": 0.45,
-      "60_mph": 0.40,
-      "65_mph": 0.40,
-      "70_mph": 0.35,
-      "75_mph": 0.35,
-      "80_mph": 0.35
+      "50_mph": 0.50,
+      "55_mph": 0.473,
+      "60_mph": 0.45,
+      "65_mph": 0.424,
+      "70_mph": 0.40,
+      "75_mph": 0.40,
+      "80_mph": 0.40
+    },
+    "transition_length": {
+      "_note": "DOTD RDM Sec. 4.6.3 — L = |slope_change| × W × lane_factor / (1/denominator)",
+      "_source": "Table 3-15 AASHTO Green Book via DOTD RDM Sec. 4.6.3 (April 2022)",
+      "_normal_crown_pct": 2.5,
+      "max_relative_gradient_denominator": {
+        "30_mph": 152,
+        "40_mph": 172,
+        "45_mph": 185,
+        "50_mph": 200,
+        "60_mph": 222,
+        "70_mph": 250,
+        "55_mph": 211,
+        "65_mph": 236,
+        "75_mph": 250,
+        "80_mph": 250
+      },
+      "lane_factors": {
+        "_note": "DOTD RDM Sec. 4.6.3 Table 3-16 AASHTO",
+        "rotated_about_centerline": {
+          "2": 1.0,
+          "3": 1.2,
+          "4": 1.5,
+          "5": 1.7,
+          "6": 2.0
+        },
+        "rotated_about_edge": {
+          "2": 1.5,
+          "3": 2.0,
+          "4": 2.5,
+          "5": 3.0,
+          "6": 3.5
+        }
+      },
+      "default_lane_width_ft": 12,
+      "tangent_runoff_pct": 80,
+      "curve_runoff_pct": 20
     }
   },
 

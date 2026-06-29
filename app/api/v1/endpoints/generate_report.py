@@ -17,6 +17,8 @@ async def generate_report(body: ReportRequest):
         report_date=report_date,
         observations=body.observations,
         changes=body.changes,
+        contract_number=body.contract_number,
+        reviewing_firm=body.reviewing_firm,
     )
 
     filename = body.project_name.replace(" ", "_") + f"_{report_date}.docx"

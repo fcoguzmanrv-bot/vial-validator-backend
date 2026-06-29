@@ -203,6 +203,8 @@ def build_report(
     report_date: str,
     observations: list[AASHTOObservation],
     changes: list[VersionChange] | None,
+    contract_number: str | None = None,
+    reviewing_firm: str | None = None,
 ) -> bytes:
     doc = Document()
 
@@ -219,6 +221,12 @@ def build_report(
     style.font.size = Pt(10)
 
     _add_footer(doc, project_name)
+
+    # Observaciones a incluir en el informe: excluir compliant+informativo (ruido sin valor técnico)
+    report_obs = [
+        o for o in observations
+        if not (o.complies and o.severity == "informativo")
+    ]
 
     # ──────────────────────────────────────────────────────────────────────────
     # PORTADA
@@ -255,7 +263,11 @@ def build_report(
         r2 = p.add_run(value)
         r2.font.size = Pt(11)
 
+    if contract_number:
+        _portada_line("Número de Contrato", contract_number)
     _portada_line("Ingeniero Responsable", responsible_engineer)
+    if reviewing_firm:
+        _portada_line("Empresa Revisora", reviewing_firm)
     _portada_line("Fecha", report_date)
     _portada_line("Normativa Aplicada", "DOTD Louisiana Road Design Manual / AASHTO Green Book")
 
@@ -267,9 +279,10 @@ def build_report(
     h1 = doc.add_heading("1. Resumen Ejecutivo", level=1)
     h1.runs[0].font.color.rgb = _BLUE_DARK
 
-    total     = len(observations)
-    complies  = sum(1 for o in observations if o.complies)
-    no_comply = total - complies
+    non_compliant_obs = [o for o in report_obs if not o.complies]
+    n_critico  = sum(1 for o in non_compliant_obs if o.severity == "critico")
+    n_moderado = sum(1 for o in non_compliant_obs if o.severity == "moderado")
+    n_total    = len(non_compliant_obs)
 
     p = doc.add_paragraph()
     p.add_run("El presente informe analiza el cumplimiento normativo bajo estándar AASHTO "
@@ -280,17 +293,17 @@ def build_report(
 
     doc.add_paragraph()
 
-    # summary table
+    # summary table — solo incumplimientos
     tbl = doc.add_table(rows=1, cols=3)
     tbl.style = "Table Grid"
-    _header_row(tbl, "Total Observaciones", "Cumplen", "No Cumplen")
+    _header_row(tbl, "Total Incumplimientos", "Críticos", "Moderados")
     _set_column_widths(tbl, [5.5, 5.5, 5.5])
 
     row = tbl.add_row()
     for i, (val, color) in enumerate([
-        (str(total),     _BLUE_DARK),
-        (str(complies),  _GREEN),
-        (str(no_comply), _RED),
+        (str(n_total),    _BLUE_DARK),
+        (str(n_critico),  _RED),
+        (str(n_moderado), _ORANGE),
     ]):
         cell = row.cells[i]
         cell.text = val
@@ -328,7 +341,7 @@ def build_report(
     _header_row(tbl_obs, *cols_obs)
     _set_column_widths(tbl_obs, widths_obs)
 
-    for idx, obs in enumerate(observations):
+    for idx, obs in enumerate(report_obs):
         check = "✓" if obs.complies else "✗"
         color_map = {3: _GREEN if obs.complies else _RED}
         _data_row(
