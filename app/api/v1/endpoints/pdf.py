@@ -11,5 +11,5 @@ async def extract_pdf(
     file: UploadFile = File(...),
     page_range: Optional[str] = Form(None),
 ):
-    text, pages = await extract_text_from_pdf(file, page_range)
+    text, pages, _vision = await extract_text_from_pdf(file, page_range)
     return ExtractResponse(text=text, pages_extracted=pages)

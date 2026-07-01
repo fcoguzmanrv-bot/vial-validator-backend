@@ -222,6 +222,12 @@ def build_report(
 
     _add_footer(doc, project_name)
 
+    # DEBUG — diagnóstico del filtro (remover una vez confirmado)
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    for _o in observations:
+        _log.debug("OBS FILTER | parameter=%r  complies=%s  severity=%r", _o.parameter, _o.complies, _o.severity)
+
     # Observaciones a incluir en el informe: excluir compliant+informativo (ruido sin valor técnico)
     report_obs = [
         o for o in observations

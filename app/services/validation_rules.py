@@ -5,6 +5,7 @@ comparar múltiples parámetros simultáneamente — algo poco fiable si se dele
 solo al LLM.
 """
 
+import math
 import re
 from app.schemas.aashto import AASHTOObservation
 
@@ -282,15 +283,39 @@ def apply_compound_curve_rule(
         warn_threshold = _COMPOUND_RATIO_RAMP_WARN if is_ramp else _COMPOUND_RATIO_MAIN_WARN
 
         if r1 is not None and r2 is not None and r2 > 0:
+            if r1 <= r2:
+                # La curva se abre (de cerrada a plana): el criterio no aplica.
+                obs.complies = True
+                obs.severity = "informativo"
+                obs.observation = (
+                    f"Relación de radios R1={r1}ft → R2={r2}ft: la curva se abre "
+                    f"(de cerrada a plana). El criterio de ratio máximo de DOTD RDM §4.2.1 "
+                    f"solo aplica cuando se va de curva plana a cerrada (R1 > R2). "
+                    f"No constituye incumplimiento."
+                )
+                continue
+
             ratio = round(r1 / r2, 2)
             if ratio >= _COMPOUND_RATIO_HARD_CRIT:
                 severity = "critico"
             elif ratio > warn_threshold:
                 severity = "moderado"
             else:
-                # El LLM lo marcó como problema pero el ratio no supera umbral;
-                # confiar en el LLM pero bajar a informativo.
-                severity = "informativo"
+                # Ratio por debajo del umbral: no es incumplimiento.
+                obs.complies = True
+                obs.severity = "informativo"
+                obs.normative_value = (
+                    f"DOTD RDM §4.2.1 — ratio máximo "
+                    f"{'2.0:1 (rampas)' if is_ramp else '1.5:1 (vía principal)'}; "
+                    f"3.0:1 límite absoluto."
+                )
+                obs.observation = (
+                    f"Relación de radios R1={r1}ft → R2={r2}ft: ratio={ratio} "
+                    f"no supera el umbral de {warn_threshold}:1 "
+                    f"(DOTD RDM §4.2.1). No constituye incumplimiento."
+                    + (f" — {obs.observation}" if obs.observation else "")
+                )
+                continue
 
             obs.severity = severity
             obs.normative_value = (
@@ -519,6 +544,31 @@ def apply_superelevation_transition_rule(
 # (quiebre aparente en la alineación) que puede sorprender al conductor.
 _SMALL_DEFL_MAX_ANGLE = 5.0    # ángulos ≥ 5° → la restricción no aplica (DOTD RDM Sec. 4.2.1)
 
+# ── Tuberías de drenaje (DOTD Hydraulics Manual Sec. 8.5.2, 8.10.6) ───────────
+_MANNING_N: dict[str, float] = {
+    "RCP":        0.012,
+    "RCPA":       0.012,
+    "CONCRETE":   0.012,
+    "CMP":        0.024,
+    "PVC":        0.009,
+    "DESCONOCIDO": 0.012,  # supuesto conservador: concreto (más común en RCP)
+}
+
+_KW_PIPE_SLOPE = re.compile(
+    r"pendiente.*tuber[ií]a|pipe\s*slope|velocity.*pipe|"
+    r"cross\s*drain\s*pipe|storm\s*drain\s*pipe",
+    re.IGNORECASE,
+)
+
+_RE_PIPE_D   = re.compile(r"D\s*=\s*([\d.]+)\s*in", re.IGNORECASE)
+_RE_PIPE_S   = re.compile(r"S\s*=\s*([\d.]+)\s*%",  re.IGNORECASE)
+_RE_PIPE_MAT = re.compile(r"material\s*=\s*(RCP|RCPA|CMP|PVC|desconocido)", re.IGNORECASE)
+_RE_PIPE_Q   = re.compile(r"Q\s*=\s*([\d.]+)\s*cfs", re.IGNORECASE)
+
+_PIPE_MIN_VELOCITY    = 3.0   # ft/s — Sec. 8.10.6 (autolimpiante)
+_PIPE_MAX_VELOCITY    = 20.0  # ft/s — Sec. 8.10.6
+_PIPE_MIN_LONG_SLOPE  = 0.40  # %   — Sec. 8.5.2
+
 
 def apply_small_deflection_angle_rule(
     observations: list[AASHTOObservation],
@@ -554,6 +604,7 @@ def apply_small_deflection_angle_rule(
 
         if delta >= _SMALL_DEFL_MAX_ANGLE:
             obs.severity = obs.severity if obs.severity in ("critico", "moderado") else "informativo"
+            obs.complies = True
             obs.normative_value = (
                 "DOTD RDM Sec. 4.2.1: restricción L_min = 1000 - 100×Δ aplica solo "
                 f"para Δ < 10° (ángulo reportado: Δ={delta}°)."
@@ -572,24 +623,362 @@ def apply_small_deflection_angle_rule(
             f"1000 - 100×{delta}° = {l_min} ft."
         )
 
-        obs.severity = "moderado"
-
-        if l_indicated is not None:
+        if l_indicated is not None and l_indicated >= l_min:
+            obs.complies = True
+            obs.severity = "informativo"
+            obs.observation = (
+                f"Δ={delta}° < 5° pero longitud L={l_indicated:.0f}ft cumple "
+                f"el mínimo de {l_min}ft (DOTD RDM Section 4.2.1)."
+                f"{assumption_note}"
+            )
+        elif l_indicated is not None:
+            deficiency = round(l_min - l_indicated)
             deficiency_pct = round((l_min - l_indicated) / l_min * 100, 1)
+            obs.severity = "moderado"
             obs.observation = (
                 f"CURVA CON PEQUEÑO ÁNGULO DE DEFLEXIÓN: Longitud indicada {l_indicated:.0f} ft "
                 f"< mínimo requerido {l_min} ft para Δ={delta}° "
-                f"(deficiencia {deficiency_pct}%). "
+                f"(deficiencia {deficiency} ft / {deficiency_pct}%). "
                 f"Una curva corta con ángulo pequeño crea el efecto visual de 'kink' "
                 f"(quiebre aparente en la alineación) que puede sorprender al conductor. "
                 f"DOTD RDM Sec. 4.2.1.{assumption_note}"
             )
         else:
+            obs.severity = "moderado"
             obs.observation = (
                 f"CURVA CON PEQUEÑO ÁNGULO DE DEFLEXIÓN (Δ={delta}°): "
                 f"Longitud mínima requerida: {l_min} ft. "
                 f"Verificar longitud de curva en el plano horizontal. "
                 f"DOTD RDM Sec. 4.2.1.{assumption_note}"
+            )
+
+    return observations
+
+
+def _calc_pipe_velocity(diameter_in: float, slope_pct: float, material: str) -> float:
+    """
+    Velocidad a tubo lleno — Manning (DOTD Hydraulics Manual Sec. 8-B.6.1, Eq. 8-B.6-1):
+        V = (1.486 / n) × R^(2/3) × S^(1/2)
+    Para sección circular llena: R = D/4  (D en ft).
+    """
+    n = _MANNING_N.get(material.upper(), 0.012)
+    diameter_ft = diameter_in / 12
+    R = diameter_ft / 4
+    S = slope_pct / 100
+    return round((1.486 / n) * (R ** (2 / 3)) * (S ** 0.5), 2)
+
+
+def apply_pipe_slope_velocity_rule(
+    observations: list[AASHTOObservation],
+) -> list[AASHTOObservation]:
+    """
+    Valida velocidad de flujo a tubo lleno en tuberías de drenaje según
+    DOTD Hydraulics Manual Sec. 8.10.6 (V_min / V_max) y Sec. 8.5.2 (S_min).
+
+    Espera found_value con el formato que genera el LLM:
+        "D=15in, S=0.40%, material=RCP"
+    o con caudal opcional:
+        "D=18in, S=1.20%, material=CMP, Q=12.5cfs"
+    """
+    for obs in observations:
+        if not _KW_PIPE_SLOPE.search(obs.parameter):
+            continue
+
+        m_d   = _RE_PIPE_D.search(obs.found_value)
+        m_s   = _RE_PIPE_S.search(obs.found_value)
+        m_mat = _RE_PIPE_MAT.search(obs.found_value)
+        m_q   = _RE_PIPE_Q.search(obs.found_value)
+
+        diameter = _parse_float(m_d.group(1)) if m_d else None
+        slope    = _parse_float(m_s.group(1)) if m_s else None
+        material = m_mat.group(1).upper() if m_mat else "DESCONOCIDO"
+
+        if diameter is None or slope is None:
+            obs.complies = True
+            obs.severity = "informativo"
+            obs.observation = (
+                "Datos insuficientes (falta diámetro o pendiente) para calcular "
+                "velocidad de flujo. No se genera observación normativa."
+            )
+            continue
+
+        velocity = _calc_pipe_velocity(diameter, slope, material)
+        n_used   = _MANNING_N.get(material, 0.012)
+
+        assumption_note = (
+            " Material no especificado — se asumió concreto (n=0.012) como supuesto conservador."
+            if material == "DESCONOCIDO" else ""
+        )
+
+        issues: list[str] = []
+        if velocity < _PIPE_MIN_VELOCITY:
+            issues.append(
+                f"velocidad {velocity} ft/s < mínima autolimpiante {_PIPE_MIN_VELOCITY} ft/s"
+            )
+        if velocity > _PIPE_MAX_VELOCITY:
+            issues.append(
+                f"velocidad {velocity} ft/s > máxima permitida {_PIPE_MAX_VELOCITY} ft/s"
+            )
+        if slope < _PIPE_MIN_LONG_SLOPE:
+            issues.append(
+                f"pendiente {slope}% < mínima longitudinal {_PIPE_MIN_LONG_SLOPE}% (Sec. 8.5.2)"
+            )
+
+        obs.normative_value = (
+            f"DOTD Hydraulics Manual Sec. 8.10.6 — V_min={_PIPE_MIN_VELOCITY} ft/s, "
+            f"V_max={_PIPE_MAX_VELOCITY} ft/s. Sec. 8.5.2 — S_min={_PIPE_MIN_LONG_SLOPE}%. "
+            f"Calculado: V={velocity} ft/s (D={diameter}in, S={slope}%, n={n_used}, material={material})."
+        )
+
+        if issues:
+            obs.complies = False
+            obs.severity = "critico" if velocity > _PIPE_MAX_VELOCITY else "moderado"
+            obs.observation = (
+                f"TUBERÍA FUERA DE RANGO: {'; '.join(issues)}. "
+                f"Velocidad calculada a tubo lleno (Manning, n={n_used}): {velocity} ft/s."
+                f"{assumption_note}"
+            )
+        else:
+            obs.complies = True
+            obs.severity = "informativo"
+            obs.observation = (
+                f"Velocidad calculada {velocity} ft/s dentro del rango aceptable "
+                f"({_PIPE_MIN_VELOCITY}–{_PIPE_MAX_VELOCITY} ft/s). Pendiente {slope}% "
+                f"cumple mínimo longitudinal.{assumption_note}"
+            )
+
+    return observations
+
+
+_KW_OUTLET_VELOCITY = re.compile(
+    r"capacidad\s*hidr[aá]ulica|outlet\s*velocity|differential\s*head",
+    re.IGNORECASE,
+)
+
+_RE_OUTLET_V    = re.compile(r"outlet_velocity\s*=\s*([\d.]+)\s*fps", re.IGNORECASE)
+_RE_DIFF_HEAD   = re.compile(r"differential_head\s*=\s*([\d.]+)\s*ft", re.IGNORECASE)
+_RE_STRUCTURE_ID = re.compile(r"structure\s*=\s*([\w/\-]+)", re.IGNORECASE)
+
+_OUTLET_V_SCOUR_RISK  = 9.0   # ft/s, Sec. 6.10/6.11 — riesgo socavación culverts
+_OUTLET_V_PROTECTION  = 10.0  # ft/s, Sec. 8.10.7 — posible protección requerida
+_OUTLET_V_ALERT       = 15.0  # ft/s — punto de escalada dentro de moderado
+_OUTLET_V_MAX         = 20.0  # ft/s, Sec. 8.10.6 — máximo absoluto
+_DIFF_HEAD_MAX        = 1.0   # ft,   Sec. 6.9.1/6.9.2 — máximo general
+
+_SEV_RANK = ["informativo", "moderado", "critico"]
+
+
+def apply_outlet_velocity_rule(
+    observations: list[AASHTOObservation],
+) -> list[AASHTOObservation]:
+    """
+    Valida Outlet Velocity y Differential Head de estructuras de drenaje
+    según DOTD Hydraulics Manual Sec. 6.9 (differential head) y
+    Sec. 6.10/6.11/8.10.7 (outlet velocity / riesgo de socavación).
+    """
+    for obs in observations:
+        if not _KW_OUTLET_VELOCITY.search(obs.parameter):
+            continue
+
+        m_v  = _RE_OUTLET_V.search(obs.found_value)
+        m_dh = _RE_DIFF_HEAD.search(obs.found_value)
+        m_id = _RE_STRUCTURE_ID.search(obs.found_value)
+
+        outlet_v    = _parse_float(m_v.group(1))  if m_v  else None
+        diff_head   = _parse_float(m_dh.group(1)) if m_dh else None
+        structure_id = m_id.group(1) if m_id else "no identificada"
+
+        if outlet_v is None and diff_head is None:
+            obs.complies = True
+            obs.severity = "informativo"
+            obs.observation = "Datos insuficientes (sin outlet velocity ni differential head)."
+            continue
+
+        issues: list[str] = []
+        max_sev = "informativo"
+
+        def _escalate(sev: str) -> None:
+            nonlocal max_sev
+            if _SEV_RANK.index(sev) > _SEV_RANK.index(max_sev):
+                max_sev = sev
+
+        # ── Outlet Velocity ───────────────────────────────────────────────────
+        if outlet_v is not None:
+            if outlet_v > _OUTLET_V_MAX:
+                issues.append(
+                    f"Outlet velocity {outlet_v} fps excede el máximo absoluto de "
+                    f"{_OUTLET_V_MAX} fps (DOTD Hydraulics Manual Sec. 8.10.6)."
+                )
+                _escalate("critico")
+            elif outlet_v > _OUTLET_V_PROTECTION:
+                sev = "critico" if outlet_v > _OUTLET_V_ALERT else "moderado"
+                issues.append(
+                    f"Outlet velocity {outlet_v} fps > {_OUTLET_V_PROTECTION} fps — "
+                    f"posible protección de socavación requerida (Sec. 8.10.7)."
+                )
+                _escalate(sev)
+            elif outlet_v > _OUTLET_V_SCOUR_RISK:
+                issues.append(
+                    f"Outlet velocity {outlet_v} fps > {_OUTLET_V_SCOUR_RISK} fps — "
+                    f"riesgo de socavación en culverts (Sec. 6.10/6.11); "
+                    f"verificar Tabla 6.11-1 para profundidad máxima sin protección."
+                )
+                _escalate("moderado")
+
+        # ── Differential Head ─────────────────────────────────────────────────
+        if diff_head is not None:
+            if diff_head > _DIFF_HEAD_MAX:
+                issues.append(
+                    f"Differential head {diff_head} ft excede el máximo normativo de "
+                    f"{_DIFF_HEAD_MAX} ft (DOTD Hydraulics Manual Sec. 6.9.1/6.9.2)."
+                )
+                _escalate("critico")
+
+        obs.normative_value = (
+            f"DOTD Hydraulics Manual Sec. 6.9 (ΔH_max={_DIFF_HEAD_MAX} ft), "
+            f"Sec. 6.10/6.11 (riesgo socavación >{_OUTLET_V_SCOUR_RISK} fps), "
+            f"Sec. 8.10.7 (posible protección >{_OUTLET_V_PROTECTION} fps), "
+            f"Sec. 8.10.6 (máximo absoluto {_OUTLET_V_MAX} fps)."
+        )
+
+        if issues:
+            obs.complies = False
+            obs.severity = max_sev
+            obs.observation = f"Estructura {structure_id}: " + " ".join(issues)
+        else:
+            obs.complies = True
+            obs.severity = "informativo"
+            parts = []
+            if outlet_v  is not None: parts.append(f"outlet velocity {outlet_v} fps")
+            if diff_head is not None: parts.append(f"differential head {diff_head} ft")
+            obs.observation = (
+                f"Estructura {structure_id}: {', '.join(parts)} dentro de rangos aceptables."
+            )
+
+    return observations
+
+
+_KW_PIPE_COVER = re.compile(
+    r"profundidad\s*de\s*tapada|pipe\s*cover|cobertura\s*(m[ií]nima)?",
+    re.IGNORECASE,
+)
+
+_RE_COVER_D        = re.compile(r"D\s*=\s*([\d.]+)\s*in", re.IGNORECASE)
+_RE_COVER_INV      = re.compile(r"inv_elev\s*=\s*([\d.]+)\s*ft", re.IGNORECASE)
+_RE_COVER_SUBGRADE = re.compile(r"subgrade_elev\s*=\s*([\d.]+)\s*ft", re.IGNORECASE)
+_RE_COVER_TOP      = re.compile(r"top_elev\s*=\s*([\d.]+)\s*ft", re.IGNORECASE)
+_RE_COVER_STRUCT   = re.compile(r"structure\s*=\s*([\w/\-]+)", re.IGNORECASE)
+
+_COVER_MIN_STANDARD_IN = 9.0    # pulgadas — tubos ≤ 84", Sec. 6.7/8.12
+_COVER_MIN_LARGE_IN    = 12.0   # pulgadas — tubos > 84", Sec. 6.7/8.12
+_COVER_LARGE_THRESHOLD = 84.0   # pulgadas — umbral de diámetro grande
+
+
+def apply_pipe_cover_rule(
+    observations: list[AASHTOObservation],
+) -> list[AASHTOObservation]:
+    """
+    Valida profundidad de tapada mínima de tuberías según
+    DOTD Hydraulics Manual Sec. 6.7/8.12:
+        - Tubos ≤ 84": cobertura mínima 9 pulgadas
+        - Tubos > 84": cobertura mínima 12 pulgadas
+
+    Cobertura = subgrade_elev - top_of_pipe
+              = subgrade_elev - (inv_elev + D/12)
+
+    Si se entrega top_elev directamente (= top of pipe, no subrasante),
+    no se puede calcular la cobertura sin subgrade_elev → informativo.
+    """
+    for obs in observations:
+        if not _KW_PIPE_COVER.search(obs.parameter):
+            continue
+
+        m_d        = _RE_COVER_D.search(obs.found_value)
+        m_inv      = _RE_COVER_INV.search(obs.found_value)
+        m_subgrade = _RE_COVER_SUBGRADE.search(obs.found_value)
+        m_top      = _RE_COVER_TOP.search(obs.found_value)
+        m_struct   = _RE_COVER_STRUCT.search(obs.found_value)
+
+        diameter      = _parse_float(m_d.group(1))        if m_d        else None
+        inv_elev      = _parse_float(m_inv.group(1))      if m_inv      else None
+        subgrade_elev = _parse_float(m_subgrade.group(1)) if m_subgrade else None
+        top_elev      = _parse_float(m_top.group(1))      if m_top      else None
+        structure_id  = m_struct.group(1)                 if m_struct   else "no identificada"
+
+        if diameter is None or inv_elev is None:
+            obs.complies = True
+            obs.severity = "informativo"
+            obs.observation = (
+                "Datos insuficientes (falta diámetro o inv_elev) para calcular "
+                "profundidad de tapada."
+            )
+            continue
+
+        # Calcular top of pipe
+        top_of_pipe = inv_elev + (diameter / 12)
+
+        # Calcular cobertura
+        if subgrade_elev is not None:
+            cover_ft = subgrade_elev - top_of_pipe
+        elif top_elev is not None:
+            # top_elev es la elevación superior del tubo (ya es top_of_pipe);
+            # sin subgrade_elev no es posible calcular la cobertura sobre el tubo.
+            obs.complies = True
+            obs.severity = "informativo"
+            obs.observation = (
+                f"Estructura {structure_id}: top_elev={top_elev}ft disponible pero falta "
+                f"subgrade_elev para calcular la cobertura sobre el tubo. "
+                f"top_of_pipe calculado = {top_of_pipe:.2f}ft (inv_elev={inv_elev}ft + D={diameter}in/12). "
+                f"Verificar si 'TOP ELEV.' en el plano corresponde a la subrasante — "
+                f"en ese caso usar subgrade_elev en lugar de top_elev."
+            )
+            continue
+        else:
+            obs.complies = True
+            obs.severity = "informativo"
+            obs.observation = (
+                f"Estructura {structure_id}: falta elevación de subrasante "
+                f"(subgrade_elev) para calcular cobertura."
+            )
+            continue
+
+        cover_in = cover_ft * 12  # convertir a pulgadas
+
+        # Determinar mínimo según diámetro
+        min_cover_in = (
+            _COVER_MIN_LARGE_IN
+            if diameter > _COVER_LARGE_THRESHOLD
+            else _COVER_MIN_STANDARD_IN
+        )
+
+        obs.normative_value = (
+            f"DOTD Hydraulics Manual Sec. 6.7/8.12 — cobertura mínima: "
+            f"{min_cover_in}\" para tubos "
+            f"{'>' if diameter > _COVER_LARGE_THRESHOLD else '≤'}84\". "
+            f"Calculado: cobertura = {cover_in:.1f}\" "
+            f"(subgrade {subgrade_elev}ft − top of pipe {top_of_pipe:.2f}ft)."
+        )
+
+        if cover_in < min_cover_in:
+            deficiency = round(min_cover_in - cover_in, 1)
+            obs.complies = False
+            obs.severity = "critico" if deficiency > 3 else "moderado"
+            obs.observation = (
+                f"TAPADA INSUFICIENTE — Estructura {structure_id}: "
+                f"cobertura calculada {cover_in:.1f}\" < mínima {min_cover_in}\" "
+                f"(deficiencia {deficiency}\"). "
+                f"D={diameter}in, inv_elev={inv_elev}ft, "
+                f"subgrade_elev={subgrade_elev}ft, top_of_pipe={top_of_pipe:.2f}ft. "
+                f"DOTD Hydraulics Manual Sec. 6.7/8.12."
+            )
+        else:
+            obs.complies = True
+            obs.severity = "informativo"
+            obs.observation = (
+                f"Estructura {structure_id}: cobertura {cover_in:.1f}\" "
+                f"cumple el mínimo de {min_cover_in}\" "
+                f"(D={'>' if diameter > _COVER_LARGE_THRESHOLD else '≤'}84\"). "
+                f"DOTD Hydraulics Manual Sec. 6.7/8.12."
             )
 
     return observations
@@ -605,4 +994,7 @@ def apply_all_rules(
     observations = apply_broken_back_rule(observations)
     observations = apply_superelevation_transition_rule(observations)
     observations = apply_small_deflection_angle_rule(observations)
+    observations = apply_pipe_slope_velocity_rule(observations)
+    observations = apply_outlet_velocity_rule(observations)
+    observations = apply_pipe_cover_rule(observations)
     return observations

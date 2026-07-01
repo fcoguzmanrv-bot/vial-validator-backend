@@ -1,4 +1,5 @@
 import re
+import base64
 import pdfplumber
 from typing import Optional
 from fastapi import UploadFile
@@ -60,22 +61,89 @@ def parse_page_range(page_range: Optional[str], total_pages: int) -> list[int]:
     return sorted(p for p in pages if 0 <= p < total_pages)
 
 
+def is_text_insufficient(cleaned_text: str, min_length: int = 50) -> bool:
+    """Returns True when cleaned text has too little content for LLM extraction.
+
+    Triggers Vision fallback for pages that are pure vector CAD (no text layer)
+    or have only a title block with no technical data.
+    """
+    text = cleaned_text.strip()
+    if len(text) < min_length:
+        return True
+    # If there are no multi-digit numbers the page likely has no measurement data
+    if not re.search(r"\d{2,}", text):
+        return True
+    return False
+
+
+def should_use_vision(
+    page_number: int,
+    cleaned_text: str,
+    force_vision_pages: "set[int] | None" = None,
+) -> bool:
+    """Decides whether to use Claude Vision for a page.
+
+    Forced pages bypass the automatic text-sufficiency heuristic — useful for
+    pages whose text layer exists but doesn't capture CAD table data (e.g. Cross
+    Drain Information tables rendered as vector graphics on pages that also have
+    structural IDs and notes extractable as text).
+    """
+    if force_vision_pages and page_number in force_vision_pages:
+        return True
+    return is_text_insufficient(cleaned_text)
+
+
+def render_page_to_base64(pdf_bytes: bytes, page_number: int, dpi: int = 150) -> str:
+    """Renders one PDF page (1-indexed) to a base64-encoded PNG string."""
+    import fitz  # PyMuPDF — optional dependency
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[page_number - 1]
+    pix = page.get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72))
+    img_bytes = pix.tobytes("png")
+    doc.close()
+    return base64.b64encode(img_bytes).decode("utf-8")
+
+
 async def extract_text_from_pdf(
     file: UploadFile,
     page_range: Optional[str] = None,
-) -> tuple[str, list[int]]:
+    force_vision_pages: "set[int] | None" = None,
+) -> tuple[str, list[int], list[dict]]:
+    """Extract text from PDF pages with automatic Vision fallback detection.
+
+    Returns:
+        text          — combined cleaned text from pages with sufficient content
+        pages_used    — 1-indexed list of all processed pages
+        vision_pages  — list of {"page_number": int, "image_b64": str} for pages
+                        where text was insufficient and PyMuPDF is available
+    """
+    try:
+        import fitz as _fitz  # noqa: F401
+        has_fitz = True
+    except ImportError:
+        has_fitz = False
+
     contents = await file.read()
     buffer = io.BytesIO(contents)
+
+    vision_pages: list[dict] = []
 
     with pdfplumber.open(buffer) as pdf:
         total = len(pdf.pages)
         page_indices = parse_page_range(page_range, total)
 
-        texts = []
+        texts: list[str] = []
         for idx in page_indices:
             page_text = pdf.pages[idx].extract_text() or ""
-            texts.append(clean_extracted_text(page_text))
+            cleaned = clean_extracted_text(page_text)
+
+            if has_fitz and should_use_vision(idx + 1, cleaned, force_vision_pages):
+                image_b64 = render_page_to_base64(contents, idx + 1)
+                vision_pages.append({"page_number": idx + 1, "image_b64": image_b64})
+                texts.append(f"[PÁGINA {idx + 1}: contenido en imagen — Vision activo]")
+            else:
+                texts.append(cleaned)
 
     extracted_text = "\n\n".join(texts)
     pages_used = [i + 1 for i in page_indices]
-    return extracted_text, pages_used
+    return extracted_text, pages_used, vision_pages

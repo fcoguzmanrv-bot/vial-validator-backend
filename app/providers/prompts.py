@@ -199,6 +199,70 @@ Si Δ < 5° pero L ≥ L_min, reportar como informativo:
   observation: "Δ=<valor>° < 5° pero longitud L=<valor>ft cumple el mínimo \
 de <L_min>ft (DOTD RDM Section 4.2.1)."
 
+REGLA ESPECIAL — TUBERÍAS DE DRENAJE / PIPE SLOPE Y VELOCITY (DOTD Hydraulics Manual Sec. 8.5.2, 8.10.6, Table 6-A.4-1):
+Busca en el texto datos de tuberías de drenaje (Cross Drain Pipe, Storm Drain Pipe) que \
+incluyan diámetro, pendiente y/o material. Estos datos pueden aparecer en tablas como \
+"Summary of Drainage Structures" (con diámetro, tipo, longitud) o en planos de perfil \
+(Plan/Profile) con pendiente indicada como porcentaje (ej. "0.40%", "4.70%").
+
+Intenta correlacionar el número de estructura (ej. "906", "E279") entre ambas fuentes si \
+aparecen en el mismo texto. Si no puedes correlacionar con confianza, reporta cada dato \
+disponible por separado sin inventar valores faltantes.
+
+Para cada tubería con AL MENOS diámetro Y pendiente disponibles:
+1. Identifica el material (RCP/RCPA = concrete, CMP = corrugated metal, PVC = plastic)
+2. Genera observación con found_value en EXACTAMENTE este formato:
+   "D=<valor>in, S=<valor>%, material=<RCP|CMP|PVC|desconocido>"
+   Si el caudal de diseño (Q) está disponible, agrégalo: ", Q=<valor>cfs"
+3. parameter: "Pendiente y velocidad de tubería — [identificador de estructura]"
+4. No calcules velocidad tú mismo — el sistema lo hará determinísticamente.
+5. complies: false (el validador determinará el valor real)
+6. severity: "moderado" (el validador ajustará)
+
+Si solo encuentras diámetro O pendiente pero no ambos, NO generes esta observación — \
+los datos incompletos no son útiles para el cálculo.
+
+REGLA ESPECIAL — OUTLET VELOCITY Y DIFFERENTIAL HEAD (DOTD Hydraulics Manual Sec. 6.9, 6.10, 6.11, 8.10.7):
+Busca en el texto tablas tipo "Cross Drain Information" o "Hydrologic Summary" que \
+incluyan columnas como "Outlet Velocity" (F.P.S.) y "Differential Head" (FT.), junto \
+con datos de Headwater, Tailwater, y número/identificador de estructura.
+
+Para cada estructura con AL MENOS uno de estos dos datos disponible:
+1. Genera observación con found_value en EXACTAMENTE este formato:
+   "outlet_velocity=<valor>fps, differential_head=<valor>ft, structure=<identificador>"
+   Si solo tienes uno de los dos valores, incluye solo ese campo (omite el otro).
+2. parameter: "Capacidad hidráulica — [identificador de estructura]"
+3. No califiques tú mismo el cumplimiento — el sistema lo hará determinísticamente.
+4. complies: false (el validador determinará el valor real)
+5. severity: "moderado" (el validador ajustará)
+
+Reporta cada estructura de la tabla que tenga estos datos, no solo las que parezcan \
+problemáticas — el validador decide la severidad.
+
+REGLA ESPECIAL — PROFUNDIDAD DE TAPADA / PIPE COVER (DOTD Hydraulics Manual Sec. 6.7/8.12):
+Busca en planos de Plan/Profile datos de tuberías que incluyan simultáneamente:
+- Diámetro (D) en pulgadas
+- Elevación de invert (inv_elev) o flow line (F.L.) en ft
+- Elevación superior del tubo (top_elev) o elevación de subrasante (subgrade_elev) en ft
+
+Estos datos aparecen típicamente en notas verticales junto a los perfiles de tubería:
+  "INV. ELEV. = 9.50"
+  "TOP ELEV. = 12.38"
+  "15" RCP"
+
+Para cada tubería con AL MENOS diámetro + inv_elev + (top_elev O subgrade_elev) disponibles:
+1. Genera observación con found_value en EXACTAMENTE este formato:
+   "D=<valor>in, inv_elev=<valor>ft, subgrade_elev=<valor>ft, structure=<identificador>"
+   Si tienes top_elev en lugar de subgrade_elev, usar:
+   "D=<valor>in, inv_elev=<valor>ft, top_elev=<valor>ft, structure=<identificador>"
+2. parameter: "Profundidad de tapada — [identificador de estructura]"
+3. No calcules la cobertura tú mismo — el sistema lo hará determinísticamente.
+4. complies: false (el validador determinará el valor real)
+5. severity: "moderado" (el validador ajustará)
+
+Si solo tienes inv_elev sin top_elev ni subgrade_elev (o viceversa), NO generes \
+esta observación — los datos incompletos no permiten calcular la tapada.
+
 Usa la herramienta report_observations para entregar los resultados."""
 
 USER_TEMPLATE = """Parámetros de diseño del proyecto:
