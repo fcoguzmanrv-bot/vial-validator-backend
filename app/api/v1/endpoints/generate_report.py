@@ -12,13 +12,15 @@ async def generate_report(body: ReportRequest):
     report_date = body.date or date.today().isoformat()
 
     docx_bytes = build_report(
-        project_name=body.project_name,
-        responsible_engineer=body.responsible_engineer,
-        report_date=report_date,
         observations=body.observations,
+        project_name=body.project_name,
+        contract_number=body.contract_number or "",
+        engineer=body.responsible_engineer,
+        reviewing_firm=body.reviewing_firm or "",
+        page_range=body.page_range or "",
+        pdf_filename=body.pdf_filename or "",
+        report_date=report_date,
         changes=body.changes,
-        contract_number=body.contract_number,
-        reviewing_firm=body.reviewing_firm,
     )
 
     filename = body.project_name.replace(" ", "_") + f"_{report_date}.docx"

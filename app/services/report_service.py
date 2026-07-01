@@ -1,6 +1,16 @@
+"""
+Generador de informe técnico Word — estructura de secciones:
+  1. Portada
+  2. Resumen Ejecutivo
+  3. Tabla General de Observaciones
+  3..N. Detalle por disciplina (Alineamiento / Perfil / Drenaje / Otros)
+  N+1. Firmas
+"""
+
 import io
-import re
-from datetime import date as date_type
+from collections import defaultdict
+from datetime import date as _date_type
+
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -9,494 +19,648 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 from app.schemas.aashto import AASHTOObservation
-from app.schemas.compare import VersionChange
+from app.schemas.compare import VersionChange  # kept for backward-compat signature
 
-# ── normative reference parser ────────────────────────────────────────────────
+# ── Paleta de colores ─────────────────────────────────────────────────────────
 
-# JSON-path patterns → (documento, capítulo, sección, título)
-_DOTD_REF_MAP: list[tuple[re.Pattern, str, str, str, str]] = [
-    # Más específicos primero — evitan que patrones genéricos los capturen antes
-    (re.compile(r"broken[- ]?back|tangente.*curvas|curvas.*misma.*direcci", re.I),
-     "DOTD Louisiana RDM", "Cap. 4", "Sec. 4.2.1", "Curvas Broken-Back"),
-    (re.compile(r"compound.*curve|curva.*compuesta|cambio.*curvatura|relaci[oó]n.*radios", re.I),
-     "DOTD Louisiana RDM", "Cap. 4", "Sec. 4.2.1", "Curvas Compuestas"),
-    (re.compile(r"peralte.*invert|superelevaci[oó]n.*invert|inverted.*super", re.I),
-     "DOTD Louisiana RDM", "Cap. 3", "Sec. 3.3.2", "Superelevación — Peralte Invertido"),
-    (re.compile(r"superelevation|peralte|emax", re.I),
-     "DOTD Louisiana RDM", "Cap. 3", "Sec. 3.3.2", "Superelevación"),
-    (re.compile(r"drenaje|escurrimiento|zona.*sin.*escurr|drainag", re.I),
-     "DOTD Louisiana RDM", "Cap. 7", "Sec. 7.1", "Drenaje Superficial"),
-    (re.compile(r"cross_slope|pendiente.*transversal|bombeo|cross.*slope", re.I),
-     "DOTD Louisiana RDM", "Cap. 4", "Sec. 4.4", "Pendiente Transversal Normal"),
-    (re.compile(r"lane_width|ancho.*carril|lane.*width", re.I),
-     "DOTD Louisiana RDM", "Cap. 4", "Sec. 4.3.1", "Anchos de Carril"),
-    (re.compile(r"shoulder_width|ancho.*hombro|shoulder", re.I),
-     "DOTD Louisiana RDM", "Cap. 4", "Sec. 4.3.2", "Anchos de Hombro"),
-    (re.compile(r"minimum_grade|pendiente.*m[ií]nima", re.I),
-     "DOTD Louisiana RDM", "Cap. 5", "Sec. 5.2", "Pendiente Longitudinal Mínima"),
-    (re.compile(r"grade\.max|pendiente.*longitudinal|max.*grade|longitudinal.*grade", re.I),
-     "DOTD Louisiana RDM", "Cap. 5", "Sec. 5.2", "Pendiente Longitudinal Máxima"),
-    (re.compile(r"stopping_sight|SSD|visibilidad.*parada", re.I),
-     "DOTD Louisiana RDM / AASHTO Green Book", "Cap. 3", "Sec. 3.1", "Distancia de Visibilidad de Parada"),
-    (re.compile(r"k_value|curva.*vertical|vertical.*curve", re.I),
-     "DOTD Louisiana RDM", "Cap. 5", "Sec. 5.3", "Curvas Verticales"),
-    (re.compile(r"clear_zone|zona.*libre", re.I),
-     "DOTD Louisiana RDM / AASHTO Roadside Design Guide", "Cap. 6", "Sec. 6.2", "Zona Libre Lateral"),
-    (re.compile(r"horizontal_alignment|minimum_radius|radio.*m[ií]nimo|curvatura.*horizontal", re.I),
-     "DOTD Louisiana RDM", "Cap. 3", "Sec. 3.3", "Alineamiento Horizontal — Radios Mínimos"),
-    (re.compile(r"design_speed|velocidad.*dise[ñn]o", re.I),
-     "DOTD Louisiana RDM", "Cap. 2", "Sec. 2.3", "Velocidad de Diseño"),
-]
-
-# Extrae §X.X.X si el LLM ya lo embebió en normative_value
-_RE_SECTION = re.compile(r"[Ss]ec(?:tion|\.)\s*([\d.]+)|§\s*([\d.]+)")
-
-
-def _parse_normative_ref(obs: AASHTOObservation) -> tuple[str, str, str, str, str]:
-    """
-    Devuelve (documento, capitulo, seccion, titulo, valor_requerido).
-    Busca primero en normative_value por §/Section, luego por JSON-path keywords,
-    y cae en un fallback genérico si nada coincide.
-    """
-    combined = f"{obs.parameter} {obs.normative_value} {obs.observation or ''}"
-
-    # Intentar extraer sección explícita del texto
-    sec_match = _RE_SECTION.search(combined)
-    explicit_sec = sec_match.group(1) or sec_match.group(2) if sec_match else None
-
-    for pattern, doc, chap, sec, title in _DOTD_REF_MAP:
-        if pattern.search(combined):
-            if explicit_sec and explicit_sec not in sec:
-                sec = f"Sec. {explicit_sec}"
-            return doc, chap, sec, title, obs.normative_value
-    # fallback
-    return (
-        "DOTD Louisiana RDM / AASHTO Green Book",
-        "—",
-        f"Sec. {explicit_sec}" if explicit_sec else "—",
-        obs.parameter,
-        obs.normative_value,
-    )
-
-
-_SEVERITY_LABEL = {
-    "critico":    "CRÍTICO",
-    "moderado":   "MODERADO",
-    "informativo": "INFORMATIVO",
-}
-_SEVERITY_COLOR = {
-    "critico":    RGBColor(0xC0, 0x00, 0x00),
-    "moderado":   RGBColor(0xED, 0x7D, 0x31),
-    "informativo": RGBColor(0x2E, 0x75, 0xB6),
-}
-_SEVERITY_BG = {
-    "critico":    RGBColor(0xFF, 0xEB, 0xEB),
-    "moderado":   RGBColor(0xFF, 0xF4, 0xE8),
-    "informativo": RGBColor(0xEB, 0xF3, 0xFF),
-}
-
-# ── palette ──────────────────────────────────────────────────────────────────
-_BLUE_DARK  = RGBColor(0x1F, 0x39, 0x64)   # headers / portada
-_BLUE_MID   = RGBColor(0x2E, 0x75, 0xB6)   # subtítulos / rayas de tabla
-_RED        = RGBColor(0xC0, 0x00, 0x00)   # no cumple / crítico
-_GREEN      = RGBColor(0x37, 0x86, 0x10)   # cumple
-_ORANGE     = RGBColor(0xED, 0x7D, 0x31)   # moderado
-_GRAY_LIGHT = RGBColor(0xD6, 0xDC, 0xE4)   # fila par de tabla
+_BLUE_DOTD  = RGBColor(0x1F, 0x4E, 0x79)
+_RED_CRIT   = RGBColor(0xC0, 0x00, 0x00)
+_ORANGE_MOD = RGBColor(0xE6, 0x5C, 0x00)
+_GREEN_OK   = RGBColor(0x37, 0x86, 0x10)
+_GRAY_TEXT  = RGBColor(0x60, 0x60, 0x60)
 _WHITE      = RGBColor(0xFF, 0xFF, 0xFF)
 
+_BG_HEADER   = "1F4E79"
+_BG_CRITICO  = "FFE7E7"
+_BG_MODERADO = "FFF3E0"
+_BG_CUMPLE   = "F0FFF0"
+_BG_INFO     = "F8F8F8"
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# Orden canónico de disciplinas
+_DISCIPLINES = [
+    "Alineamiento Horizontal y Sección Transversal",
+    "Alzado / Perfil Vertical",
+    "Drenaje",
+    "Otros",
+]
 
-def _set_cell_bg(cell, color: RGBColor):
+
+# ── Clasificación por disciplina ──────────────────────────────────────────────
+
+def _classify_observation(parameter: str) -> str:
+    p = parameter.lower()
+    if any(k in p for k in [
+        "radio", "curvatura", "compuesta", "broken", "broken-back",
+        # con y sin tilde (datos de PDF pueden carecer de acentos)
+        "deflexion", "deflexión",
+        "peralte",
+        "superelevacion", "superelevación",
+        "transicion", "transición",
+        "transversal",
+        "angulo", "ángulo",
+        "horizontal", "curva compuesta",
+    ]):
+        return "Alineamiento Horizontal y Sección Transversal"
+    elif any(k in p for k in [
+        "vertical", "pendiente longitudinal",
+        "drenaje superficial", "k value",
+        "curva vertical", "escurrimiento", "rasante",
+    ]):
+        return "Alzado / Perfil Vertical"
+    elif any(k in p for k in [
+        "tuberia", "tubería", "pipe", "outlet",
+        "differential", "tapada",
+        "hidraulica", "hidráulica",
+        "drenaje —", "capacidad",
+    ]):
+        return "Drenaje"
+    else:
+        return "Otros"
+
+
+# ── Referencias normativas detalladas ────────────────────────────────────────
+
+_NORMATIVE_REFERENCES: dict[str, str] = {
+    # Alineamiento Horizontal
+    "radio":            "DOTD RDM Chapter 4, Sec. 4.2 (April 2022), p. 4-3 / AASHTO Green Book 7th ed., Table 3-7",
+    "curvatura":        "DOTD RDM Chapter 4, Sec. 4.2 (April 2022), p. 4-3 / AASHTO Green Book 7th ed., Table 3-7",
+    "compuesta":        "DOTD RDM Chapter 4, Sec. 4.2.1 (April 2022), p. 4-3",
+    "broken":           "DOTD RDM Chapter 4, Sec. 4.2.1 (April 2022), p. 4-4",
+    "deflexion":        "DOTD RDM Chapter 4, Sec. 4.2.1 (April 2022), p. 4-4",
+    "deflexión":        "DOTD RDM Chapter 4, Sec. 4.2.1 (April 2022), p. 4-4",
+    "angulo":           "DOTD RDM Chapter 4, Sec. 4.2.1 (April 2022), p. 4-4",
+    "ángulo":           "DOTD RDM Chapter 4, Sec. 4.2.1 (April 2022), p. 4-4",
+    "peralte invertido":"DOTD RDM Chapter 4, Sec. 4.6.1 (April 2022), p. 4-17 / AASHTO Green Book §3.3",
+    "transicion":       "DOTD RDM Chapter 4, Sec. 4.6.3 (April 2022), pp. 4-18 a 4-26",
+    "transición":       "DOTD RDM Chapter 4, Sec. 4.6.3 (April 2022), pp. 4-18 a 4-26",
+    "superelevacion":   "DOTD RDM Chapter 4, Sec. 4.6 (April 2022), p. 4-17 / AASHTO Green Book §3.3",
+    "superelevación":   "DOTD RDM Chapter 4, Sec. 4.6 (April 2022), p. 4-17 / AASHTO Green Book §3.3",
+    "transversal":      "DOTD RDM Chapter 5, Sec. 5.2 (April 2022) / AASHTO Green Book §3.3",
+    # Alzado / Perfil Vertical
+    "vertical":              "DOTD RDM Chapter 4, Sec. 4.3 (April 2022), p. 4-6 / AASHTO Green Book Tables 3-34/3-36",
+    "rasante":               "DOTD RDM Chapter 4, Sec. 4.3 (April 2022), p. 4-6",
+    "escurrimiento":         "DOTD RDM Chapter 4, Sec. 4.5.1 (April 2022), p. 4-10",
+    "pendiente longitudinal":"DOTD RDM Chapter 4, Sec. 4.3.1 (April 2022), p. 4-6 / DOTD Hydraulics Manual Sec. 8.5.2 (2011)",
+    # Drenaje
+    "tuberia":    "DOTD Hydraulics Manual (2011), Sec. 8.10.6, Table 6-A.4-1",
+    "tubería":    "DOTD Hydraulics Manual (2011), Sec. 8.10.6, Table 6-A.4-1",
+    "pipe":       "DOTD Hydraulics Manual (2011), Sec. 8.10.6, Table 6-A.4-1",
+    "outlet":     "DOTD Hydraulics Manual (2011), Sec. 6.10/6.11, 8.10.7",
+    "differential":"DOTD Hydraulics Manual (2011), Sec. 6.9.1/6.9.2",
+    "hidraulica": "DOTD Hydraulics Manual (2011), Sec. 6.9, 6.10, 8.10.7",
+    "hidráulica": "DOTD Hydraulics Manual (2011), Sec. 6.9, 6.10, 8.10.7",
+    "tapada":     "DOTD Hydraulics Manual (2011), Sec. 6.7/8.12",
+    "velocidad":  "DOTD Hydraulics Manual (2011), Sec. 8.10.6",
+    "capacidad":  "DOTD Hydraulics Manual (2011), Sec. 6.9, 6.10, 8.10.7",
+}
+
+
+def _get_normative_reference(parameter: str) -> str:
+    """Retorna la referencia normativa detallada según el tipo de observación."""
+    p = parameter.lower()
+    for keyword, reference in _NORMATIVE_REFERENCES.items():
+        if keyword in p:
+            return reference
+    return "DOTD Louisiana Road Design Manual (April 2022) / AASHTO Green Book (7th ed.)"
+
+
+# ── Helpers de XML ────────────────────────────────────────────────────────────
+
+def _set_cell_bg(cell, hex_color: str) -> None:
     tc = cell._tc
     tcPr = tc.get_or_add_tcPr()
+    for existing in tcPr.findall(qn("w:shd")):
+        tcPr.remove(existing)
     shd = OxmlElement("w:shd")
     shd.set(qn("w:val"), "clear")
     shd.set(qn("w:color"), "auto")
-    shd.set(qn("w:fill"), f"{color[0]:02X}{color[1]:02X}{color[2]:02X}")
+    shd.set(qn("w:fill"), hex_color.lstrip("#"))
     tcPr.append(shd)
 
 
-def _set_cell_border(cell, **edges):
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    tcBorders = OxmlElement("w:tcBorders")
-    for edge, attrs in edges.items():
+def _remove_table_borders(table) -> None:
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    tblBorders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
         el = OxmlElement(f"w:{edge}")
-        for k, v in attrs.items():
-            el.set(qn(f"w:{k}"), v)
-        tcBorders.append(el)
-    tcPr.append(tcBorders)
+        el.set(qn("w:val"), "none")
+        tblBorders.append(el)
+    tblPr.append(tblBorders)
 
 
-def _header_row(table, *labels, bg: RGBColor = _BLUE_DARK):
-    row = table.rows[0]
-    for i, label in enumerate(labels):
-        cell = row.cells[i]
-        cell.text = label
-        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-        p = cell.paragraphs[0]
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.runs[0]
-        run.bold = True
-        run.font.color.rgb = _WHITE
-        run.font.size = Pt(9)
-        _set_cell_bg(cell, bg)
+def _set_col_widths(table, widths_cm: list[float]) -> None:
+    for row in table.rows:
+        for i, w in enumerate(widths_cm):
+            if i < len(row.cells):
+                row.cells[i].width = Cm(w)
 
 
-def _data_row(table, values: list[str], even: bool, colors: dict[int, RGBColor] | None = None):
-    row = table.add_row()
-    for i, val in enumerate(values):
-        cell = row.cells[i]
-        cell.text = val
-        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-        p = cell.paragraphs[0]
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.runs[0]
-        run.font.size = Pt(8.5)
-        if colors and i in colors:
-            run.font.color.rgb = colors[i]
-            run.bold = True
-        if even:
-            _set_cell_bg(cell, _GRAY_LIGHT)
+def _dxa(n: int) -> int:
+    """1 DXA (twip) = 914400/1440 = 635 EMU."""
+    return n * 635
 
 
-def _add_footer(doc: Document, doc_name: str):
+def _set_col_widths_dxa(table, widths_dxa: list[int]) -> None:
+    for row in table.rows:
+        for i, w in enumerate(widths_dxa):
+            if i < len(row.cells):
+                row.cells[i].width = _dxa(w)
+
+
+def _add_deco_line(doc, color_hex: str = "1F4E79") -> None:
+    p = doc.add_paragraph()
+    pPr = p._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single")
+    bot.set(qn("w:sz"), "8")
+    bot.set(qn("w:space"), "1")
+    bot.set(qn("w:color"), color_hex)
+    pBdr.append(bot)
+    pPr.append(pBdr)
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(4)
+
+
+def _add_item_separator(doc) -> None:
+    p = doc.add_paragraph()
+    pPr = p._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single")
+    bot.set(qn("w:sz"), "2")
+    bot.set(qn("w:space"), "1")
+    bot.set(qn("w:color"), "C0C0C0")
+    pBdr.append(bot)
+    pPr.append(pBdr)
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(6)
+
+
+def _add_footer(doc: Document, project_name: str) -> None:
     section = doc.sections[0]
     footer = section.footer
     footer.is_linked_to_previous = False
     p = footer.paragraphs[0]
     p.clear()
-    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
-    run_left = p.add_run(doc_name + "    ")
-    run_left.font.size = Pt(8)
-    run_left.font.color.rgb = RGBColor(0x70, 0x70, 0x70)
+    pPr = p._p.get_or_add_pPr()
+    tabs_el = OxmlElement("w:tabs")
+    tab_right = OxmlElement("w:tab")
+    tab_right.set(qn("w:val"), "right")
+    tab_right.set(qn("w:pos"), "9360")
+    tabs_el.append(tab_right)
+    pPr.append(tabs_el)
 
-    # page number field
-    fldChar1 = OxmlElement("w:fldChar")
-    fldChar1.set(qn("w:fldCharType"), "begin")
-    instrText = OxmlElement("w:instrText")
-    instrText.text = "PAGE"
-    fldChar2 = OxmlElement("w:fldChar")
-    fldChar2.set(qn("w:fldCharType"), "end")
+    r_proj = p.add_run(project_name or "Informe Vial Validator")
+    r_proj.font.size = Pt(8)
+    r_proj.font.color.rgb = _GRAY_TEXT
 
-    run_page = p.add_run()
-    run_page.font.size = Pt(8)
-    run_page.font.color.rgb = RGBColor(0x70, 0x70, 0x70)
-    run_page._r.append(fldChar1)
-    run_page._r.append(instrText)
-    run_page._r.append(fldChar2)
+    r_tab = p.add_run("\t")
+    r_tab.font.size = Pt(8)
+
+    r_pag = p.add_run("Página ")
+    r_pag.font.size = Pt(8)
+    r_pag.font.color.rgb = _GRAY_TEXT
+
+    def _field(instr: str) -> None:
+        for fld_type, fld_text in [("begin", None), (None, instr), ("end", None)]:
+            run = p.add_run()
+            run.font.size = Pt(8)
+            run.font.color.rgb = _GRAY_TEXT
+            if fld_type:
+                el = OxmlElement("w:fldChar")
+                el.set(qn("w:fldCharType"), fld_type)
+            else:
+                el = OxmlElement("w:instrText")
+                el.set(qn("xml:space"), "preserve")
+                el.text = f" {fld_text} "
+            run._r.append(el)
+
+    _field("PAGE")
+    r_de = p.add_run(" de ")
+    r_de.font.size = Pt(8)
+    r_de.font.color.rgb = _GRAY_TEXT
+    _field("NUMPAGES")
 
 
-def _set_column_widths(table, widths_cm: list[float]):
-    for row in table.rows:
-        for i, cell in enumerate(row.cells):
-            cell.width = Cm(widths_cm[i])
+def _header_row(table, *labels: str) -> None:
+    row = table.rows[0]
+    for i, label in enumerate(labels):
+        if i >= len(row.cells):
+            break
+        cell = row.cells[i]
+        cell.text = label
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        _set_cell_bg(cell, _BG_HEADER)
+        p = cell.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(3)
+        p.paragraph_format.space_after  = Pt(3)
+        run = p.runs[0]
+        run.bold = True
+        run.font.color.rgb = _WHITE
+        run.font.size = Pt(9)
 
 
-# ── main builder ──────────────────────────────────────────────────────────────
+def _row_bg(obs: AASHTOObservation) -> str:
+    if obs.severity == "critico" and not obs.complies:
+        return _BG_CRITICO
+    if obs.severity == "moderado" and not obs.complies:
+        return _BG_MODERADO
+    if obs.complies:
+        return _BG_CUMPLE
+    return _BG_INFO
+
+
+def _deduplicate(observations: list[AASHTOObservation]) -> list[AASHTOObservation]:
+    seen: set[tuple[str, str]] = set()
+    out: list[AASHTOObservation] = []
+    for obs in observations:
+        key = (obs.parameter.strip(), obs.found_value.strip())
+        if key not in seen:
+            seen.add(key)
+            out.append(obs)
+    return out
+
+
+def _first_sentence(text: str, max_len: int = 80) -> str:
+    """Primera oración sin cortar en puntos decimales.
+    Busca '. ' (punto + espacio) como separador de oración."""
+    idx = text.find(". ")
+    if 0 < idx <= max_len:
+        return text[:idx]
+    return text[:max_len]
+
+
+# ── Secciones ─────────────────────────────────────────────────────────────────
+
+def _section_portada(
+    doc: Document,
+    project_name: str,
+    contract_number: str,
+    engineer: str,
+    reviewing_firm: str,
+    page_range: str,
+    pdf_filename: str,
+    today: str,
+) -> None:
+    for _ in range(5):
+        doc.add_paragraph()
+
+    _add_deco_line(doc)
+
+    p_title = doc.add_paragraph()
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_title.paragraph_format.space_before = Pt(8)
+    p_title.paragraph_format.space_after  = Pt(4)
+    r = p_title.add_run("INFORME TÉCNICO DE VALIDACIÓN GEOMÉTRICA")
+    r.bold = True
+    r.font.size = Pt(20)
+    r.font.color.rgb = _BLUE_DOTD
+
+    p_sub = doc.add_paragraph()
+    p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_sub.paragraph_format.space_before = Pt(0)
+    p_sub.paragraph_format.space_after  = Pt(8)
+    r2 = p_sub.add_run("Cumplimiento Normativo DOTD Louisiana Road Design Manual")
+    r2.font.size = Pt(12)
+    r2.font.color.rgb = _GRAY_TEXT
+
+    _add_deco_line(doc)
+    doc.add_paragraph()
+
+    tbl = doc.add_table(rows=4, cols=2)
+    _remove_table_borders(tbl)
+    _set_col_widths(tbl, [8.5, 8.5])
+
+    def _cell(row_idx: int, col_idx: int, label: str, value: str) -> None:
+        cell = tbl.rows[row_idx].cells[col_idx]
+        cell.paragraphs[0].clear()
+        p = cell.paragraphs[0]
+        p.paragraph_format.space_before = Pt(3)
+        p.paragraph_format.space_after  = Pt(3)
+        rl = p.add_run(f"{label}: ")
+        rl.bold = True
+        rl.font.size = Pt(10)
+        rl.font.color.rgb = _BLUE_DOTD
+        rv = p.add_run(value or "—")
+        rv.font.size = Pt(10)
+
+    _cell(0, 0, "Proyecto",              project_name)
+    _cell(0, 1, "Contrato N°",           contract_number)
+    _cell(1, 0, "Planos / Páginas",
+          f"{pdf_filename}  |  págs. {page_range}" if pdf_filename else page_range)
+    _cell(1, 1, "Fecha",                 today)
+    _cell(2, 0, "Ingeniero responsable", engineer)
+    _cell(2, 1, "Empresa revisora",      reviewing_firm)
+
+    merged = tbl.rows[3].cells[0].merge(tbl.rows[3].cells[1])
+    merged.paragraphs[0].clear()
+    p4 = merged.paragraphs[0]
+    p4.paragraph_format.space_before = Pt(3)
+    p4.paragraph_format.space_after  = Pt(3)
+    rl4 = p4.add_run("Normativa aplicada: ")
+    rl4.bold = True
+    rl4.font.size = Pt(10)
+    rl4.font.color.rgb = _BLUE_DOTD
+    rv4 = p4.add_run(
+        "DOTD Louisiana Road Design Manual (April 2022) / AASHTO Green Book (7th ed.)"
+    )
+    rv4.font.size = Pt(10)
+
+    doc.add_paragraph()
+    _add_deco_line(doc)
+
+
+def _section_resumen(
+    doc: Document,
+    project_name: str,
+    pdf_filename: str,
+    page_range: str,
+    all_obs: list[AASHTOObservation],
+) -> None:
+    non_compliant = [o for o in all_obs if not o.complies]
+    criticos      = [o for o in non_compliant if o.severity == "critico"]
+    moderados     = [o for o in non_compliant if o.severity == "moderado"]
+    informativos  = [o for o in all_obs if o.complies and o.severity == "informativo"]
+    n_total       = len(non_compliant)
+    n_critico     = len(criticos)
+    n_moderado    = len(moderados)
+    n_info        = len(informativos)
+
+    h1 = doc.add_heading("1. Resumen Ejecutivo", level=1)
+    h1.runs[0].font.color.rgb = _BLUE_DOTD
+
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(10)
+    p.add_run(
+        f"El presente informe documenta los resultados de la validación geométrica del proyecto "
+        f"{project_name or '[Proyecto]'}, realizada sobre las páginas {page_range or '[rango]'} "
+        f"del juego de planos {pdf_filename or '[plano]'}. Se identificaron {n_total} incumplimientos "
+        f"normativos bajo el estándar DOTD Louisiana Road Design Manual (April 2022) y AASHTO Green "
+        f"Book (7th ed.), de los cuales {n_critico} son de severidad crítica y {n_moderado} moderada."
+    ).font.size = Pt(10)
+
+    tbl = doc.add_table(rows=1, cols=2)
+    tbl.style = "Table Grid"
+    _header_row(tbl, "Métrica", "Valor")
+    _set_col_widths(tbl, [10.5, 5.0])
+
+    metrics = [
+        ("Páginas analizadas",                                  page_range or "—"),
+        ("Total incumplimientos",                               str(n_total)),
+        ("Críticos",                                            str(n_critico)),
+        ("Moderados",                                           str(n_moderado)),
+        ("Observaciones informativas (excluidas del informe)",  str(n_info)),
+    ]
+    for label, val in metrics:
+        row = tbl.add_row()
+        row.cells[0].text = label
+        row.cells[0].paragraphs[0].runs[0].font.size = Pt(9.5)
+        row.cells[1].text = val
+        row.cells[1].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        row.cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        row.cells[1].paragraphs[0].runs[0].font.size = Pt(9.5)
+
+    doc.add_paragraph()
+
+    if criticos:
+        h2 = doc.add_heading("Hallazgos Críticos Destacados", level=2)
+        h2.runs[0].font.color.rgb = _RED_CRIT
+
+        for obs in criticos[:5]:
+            p_item = doc.add_paragraph()
+            p_item.paragraph_format.space_before = Pt(1)
+            p_item.paragraph_format.space_after  = Pt(1)
+            param_short  = obs.parameter[:50]
+            frag = _first_sentence(obs.observation or obs.found_value or "", 80)
+            r = p_item.add_run(f"• {param_short}: {frag}")
+            r.font.size = Pt(9.5)
+
+
+def _section_tabla_general(
+    doc: Document,
+    all_obs: list[AASHTOObservation],
+) -> None:
+    h1 = doc.add_heading("2. Observaciones DOTD / AASHTO", level=1)
+    h1.runs[0].font.color.rgb = _BLUE_DOTD
+
+    cols     = ["Parámetro", "Valor encontrado", "Valor normativo", "Cumple", "Observación"]
+    col_dxa  = [2200, 1400, 1800, 400, 3560]   # total = 9360 DXA
+
+    tbl = doc.add_table(rows=1, cols=5)
+    tbl.style = "Table Grid"
+    _header_row(tbl, *cols)
+    _set_col_widths_dxa(tbl, col_dxa)
+
+    for obs in all_obs:
+        row   = tbl.add_row()
+        bg    = _row_bg(obs)
+        check = "✓" if obs.complies else "✗"
+        obs_text = (obs.observation or "")
+        if len(obs_text) > 150:
+            obs_text = obs_text[:147] + "..."
+
+        values = [obs.parameter, obs.found_value, obs.normative_value, check, obs_text]
+        check_colors = {3: _GREEN_OK if obs.complies else _RED_CRIT}
+
+        for i, val in enumerate(values):
+            cell = row.cells[i]
+            cell.width = _dxa(col_dxa[i])   # garantiza 9360 DXA en cada fila de datos
+            _set_cell_bg(cell, bg)
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            p = cell.paragraphs[0]
+            if i == 3:
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.space_before = Pt(2)
+            p.paragraph_format.space_after  = Pt(2)
+            run = p.add_run(val)
+            run.font.size = Pt(9)           # fuente 9pt en toda la tabla
+            if i in check_colors:
+                run.font.color.rgb = check_colors[i]
+                run.bold = True
+
+    doc.add_paragraph()
+
+
+def _render_obs_items(
+    doc: Document,
+    obs_list: list[AASHTOObservation],
+    color: RGBColor,
+) -> None:
+    """Renderiza la lista detallada de observaciones sin encabezado de sección."""
+    for i, obs in enumerate(obs_list, 1):
+        h3 = doc.add_heading(level=3)
+        h3.clear()
+        r_num = h3.add_run(f"{i}. {obs.parameter}")
+        r_num.font.color.rgb = color
+        r_num.font.size = Pt(10)
+
+        def _detail_line(bold_label: str, text: str, color_run: RGBColor | None = None) -> None:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(2)
+            p.paragraph_format.space_after  = Pt(2)
+            rl = p.add_run(f"{bold_label}: ")
+            rl.bold = True
+            rl.font.size = Pt(9.5)
+            rv = p.add_run(text or "—")
+            rv.font.size = Pt(9.5)
+            if color_run:
+                rv.font.color.rgb = color_run
+
+        _detail_line("Valor encontrado", obs.found_value)
+        _detail_line("Valor normativo",  obs.normative_value)
+        _detail_line("Observación",      obs.observation or "—", color_run=color)
+
+        p_ref = doc.add_paragraph()
+        p_ref.paragraph_format.space_before = Pt(2)
+        p_ref.paragraph_format.space_after  = Pt(4)
+        r_ref = p_ref.add_run(f"Referencia: {_get_normative_reference(obs.parameter)}")
+        r_ref.italic = True
+        r_ref.font.size = Pt(8.5)
+        r_ref.font.color.rgb = _GRAY_TEXT
+
+        _add_item_separator(doc)
+
+
+def _section_detalle_por_disciplina(
+    doc: Document,
+    non_compliant: list[AASHTOObservation],
+    start_num: int,
+) -> int:
+    """Genera secciones de detalle agrupadas por disciplina.
+    Retorna el número de sección siguiente (para Firmas)."""
+    by_disc: dict[str, list[AASHTOObservation]] = defaultdict(list)
+    for obs in non_compliant:
+        by_disc[_classify_observation(obs.parameter)].append(obs)
+
+    sec = start_num
+    for discipline in _DISCIPLINES:
+        disc_obs = by_disc.get(discipline, [])
+        if not disc_obs:
+            continue
+
+        criticos  = [o for o in disc_obs if o.severity == "critico"]
+        moderados = [o for o in disc_obs if o.severity == "moderado"]
+
+        h1 = doc.add_heading(f"{sec}. {discipline}", level=1)
+        h1.runs[0].font.color.rgb = _BLUE_DOTD
+
+        if criticos:
+            h2 = doc.add_heading(f"{sec}.1 Incumplimientos Críticos", level=2)
+            h2.runs[0].font.color.rgb = _RED_CRIT
+            _render_obs_items(doc, criticos, _RED_CRIT)
+
+        if moderados:
+            sub = 2 if criticos else 1
+            h2 = doc.add_heading(f"{sec}.{sub} Incumplimientos Moderados", level=2)
+            h2.runs[0].font.color.rgb = _ORANGE_MOD
+            _render_obs_items(doc, moderados, _ORANGE_MOD)
+
+        sec += 1
+
+    return sec
+
+
+def _section_firmas(doc: Document, engineer: str, today: str, section_num: int = 6) -> None:
+    h1 = doc.add_heading(f"{section_num}. Firmas", level=1)
+    h1.runs[0].font.color.rgb = _BLUE_DOTD
+
+    tbl = doc.add_table(rows=2, cols=2)
+    _remove_table_borders(tbl)
+    _set_col_widths(tbl, [8.5, 8.5])
+
+    for col_idx, (header, nombre_val) in enumerate([
+        ("Preparado por", f"Nombre: {engineer or ''}"),
+        ("Revisado por",  "Nombre:"),
+    ]):
+        cell_hdr = tbl.rows[0].cells[col_idx]
+        cell_hdr.paragraphs[0].clear()
+        p_hdr = cell_hdr.paragraphs[0]
+        p_hdr.paragraph_format.space_before = Pt(4)
+        p_hdr.paragraph_format.space_after  = Pt(2)
+        r = p_hdr.add_run(header)
+        r.bold = True
+        r.font.size = Pt(10)
+        r.font.color.rgb = _BLUE_DOTD
+
+        cell_body = tbl.rows[1].cells[col_idx]
+        cell_body.paragraphs[0].clear()
+        p_firma = cell_body.paragraphs[0]
+        p_firma.paragraph_format.space_before = Pt(20)
+        p_firma.paragraph_format.space_after  = Pt(2)
+        r_f = p_firma.add_run("Firma: " + "_" * 50)
+        r_f.font.size = Pt(10)
+
+        p_nombre = cell_body.add_paragraph()
+        p_nombre.paragraph_format.space_before = Pt(6)
+        p_nombre.paragraph_format.space_after  = Pt(2)
+        p_nombre.add_run(nombre_val).font.size = Pt(10)
+
+        fecha_val = f"Fecha: {today}" if col_idx == 0 else "Fecha:"
+        p_fecha = cell_body.add_paragraph()
+        p_fecha.paragraph_format.space_before = Pt(3)
+        p_fecha.paragraph_format.space_after  = Pt(2)
+        p_fecha.add_run(fecha_val).font.size = Pt(10)
+
+
+# ── Punto de entrada público ──────────────────────────────────────────────────
 
 def build_report(
-    project_name: str,
-    responsible_engineer: str,
-    report_date: str,
     observations: list[AASHTOObservation],
-    changes: list[VersionChange] | None,
-    contract_number: str | None = None,
-    reviewing_firm: str | None = None,
+    project_name: str = "",
+    contract_number: str = "",
+    engineer: str = "",
+    reviewing_firm: str = "",
+    page_range: str = "",
+    pdf_filename: str = "",
+    changes: "list[VersionChange] | None" = None,
+    responsible_engineer: str = "",   # alias de engineer (compat con endpoint)
+    report_date: str = "",
 ) -> bytes:
+    # Compatibilidad: el endpoint pasa engineer= directamente; responsible_engineer es fallback
+    if responsible_engineer and not engineer:
+        engineer = responsible_engineer
+    today = report_date or _date_type.today().isoformat()
+
     doc = Document()
 
-    # ── page margins ──
     section = doc.sections[0]
-    section.top_margin    = Cm(2.5)
-    section.bottom_margin = Cm(2.5)
-    section.left_margin   = Cm(3)
-    section.right_margin  = Cm(2.5)
+    section.top_margin    = Cm(2.0)
+    section.bottom_margin = Cm(2.0)
+    section.left_margin   = Cm(2.0)
+    section.right_margin  = Cm(2.0)
 
-    # ── default style ──
     style = doc.styles["Normal"]
     style.font.name = "Calibri"
     style.font.size = Pt(10)
 
     _add_footer(doc, project_name)
 
-    # DEBUG — diagnóstico del filtro (remover una vez confirmado)
-    import logging as _logging
-    _log = _logging.getLogger(__name__)
-    for _o in observations:
-        _log.debug("OBS FILTER | parameter=%r  complies=%s  severity=%r", _o.parameter, _o.complies, _o.severity)
+    deduped = _deduplicate(observations)
+    non_compliant = [o for o in deduped if not o.complies]
 
-    # Observaciones a incluir en el informe: excluir compliant+informativo (ruido sin valor técnico)
-    report_obs = [
-        o for o in observations
-        if not (o.complies and o.severity == "informativo")
-    ]
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # PORTADA
-    # ──────────────────────────────────────────────────────────────────────────
-    for _ in range(6):
-        doc.add_paragraph()
-
-    title = doc.add_paragraph()
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run("INFORME TÉCNICO DE VALIDACIÓN VIAL")
-    run.bold = True
-    run.font.size = Pt(22)
-    run.font.color.rgb = _BLUE_DARK
-
-    doc.add_paragraph()
-
-    sub = doc.add_paragraph()
-    sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run2 = sub.add_run(project_name)
-    run2.bold = True
-    run2.font.size = Pt(16)
-    run2.font.color.rgb = _BLUE_MID
-
-    for _ in range(4):
-        doc.add_paragraph()
-
-    def _portada_line(label: str, value: str):
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r1 = p.add_run(f"{label}: ")
-        r1.bold = True
-        r1.font.size = Pt(11)
-        r1.font.color.rgb = _BLUE_DARK
-        r2 = p.add_run(value)
-        r2.font.size = Pt(11)
-
-    if contract_number:
-        _portada_line("Número de Contrato", contract_number)
-    _portada_line("Ingeniero Responsable", responsible_engineer)
-    if reviewing_firm:
-        _portada_line("Empresa Revisora", reviewing_firm)
-    _portada_line("Fecha", report_date)
-    _portada_line("Normativa Aplicada", "DOTD Louisiana Road Design Manual / AASHTO Green Book")
-
+    # ── Portada ────────────────────────────────────────────────────────────────
+    _section_portada(doc, project_name, contract_number, engineer, reviewing_firm,
+                     page_range, pdf_filename, today)
     doc.add_page_break()
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # RESUMEN EJECUTIVO
-    # ──────────────────────────────────────────────────────────────────────────
-    h1 = doc.add_heading("1. Resumen Ejecutivo", level=1)
-    h1.runs[0].font.color.rgb = _BLUE_DARK
+    # ── 1. Resumen Ejecutivo ──────────────────────────────────────────────────
+    _section_resumen(doc, project_name, pdf_filename, page_range, deduped)
 
-    non_compliant_obs = [o for o in report_obs if not o.complies]
-    n_critico  = sum(1 for o in non_compliant_obs if o.severity == "critico")
-    n_moderado = sum(1 for o in non_compliant_obs if o.severity == "moderado")
-    n_total    = len(non_compliant_obs)
+    # ── 2. Tabla General ──────────────────────────────────────────────────────
+    _section_tabla_general(doc, deduped)
 
-    p = doc.add_paragraph()
-    p.add_run("El presente informe analiza el cumplimiento normativo bajo estándar AASHTO "
-              f"para el proyecto ").font.size = Pt(10)
-    run_proj = p.add_run(f"{project_name}.")
-    run_proj.bold = True
-    run_proj.font.size = Pt(10)
+    # ── 3..N: Detalle por disciplina ──────────────────────────────────────────
+    next_sec = _section_detalle_por_disciplina(doc, non_compliant, start_num=3)
 
-    doc.add_paragraph()
+    # ── Firmas ────────────────────────────────────────────────────────────────
+    doc.add_page_break()
+    _section_firmas(doc, engineer, today, section_num=next_sec)
 
-    # summary table — solo incumplimientos
-    tbl = doc.add_table(rows=1, cols=3)
-    tbl.style = "Table Grid"
-    _header_row(tbl, "Total Incumplimientos", "Críticos", "Moderados")
-    _set_column_widths(tbl, [5.5, 5.5, 5.5])
-
-    row = tbl.add_row()
-    for i, (val, color) in enumerate([
-        (str(n_total),    _BLUE_DARK),
-        (str(n_critico),  _RED),
-        (str(n_moderado), _ORANGE),
-    ]):
-        cell = row.cells[i]
-        cell.text = val
-        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-        p2 = cell.paragraphs[0]
-        p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p2.runs[0]
-        run.bold = True
-        run.font.size = Pt(14)
-        run.font.color.rgb = color
-
-    if changes:
-        critical  = sum(1 for c in changes if c.impact == "crítico")
-        moderate  = sum(1 for c in changes if c.impact == "moderado")
-        info      = sum(1 for c in changes if c.impact == "informativo")
-
-        doc.add_paragraph()
-        p3 = doc.add_paragraph()
-        p3.add_run(f"Se identificaron {len(changes)} cambios entre versiones: "
-                   f"{critical} críticos, {moderate} moderados y {info} informativos.")
-
-    doc.add_paragraph()
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # OBSERVACIONES DOTD / AASHTO
-    # ──────────────────────────────────────────────────────────────────────────
-    h2 = doc.add_heading("2. Observaciones DOTD / AASHTO", level=1)
-    h2.runs[0].font.color.rgb = _BLUE_DARK
-
-    cols_obs = ["Parámetro", "Valor Encontrado", "Valor Normativo", "Cumple", "Observación"]
-    widths_obs = [4.5, 3.5, 3.5, 1.8, 5.2]
-
-    tbl_obs = doc.add_table(rows=1, cols=len(cols_obs))
-    tbl_obs.style = "Table Grid"
-    _header_row(tbl_obs, *cols_obs)
-    _set_column_widths(tbl_obs, widths_obs)
-
-    for idx, obs in enumerate(report_obs):
-        check = "✓" if obs.complies else "✗"
-        color_map = {3: _GREEN if obs.complies else _RED}
-        _data_row(
-            tbl_obs,
-            [obs.parameter, obs.found_value, obs.normative_value, check, obs.observation or ""],
-            even=(idx % 2 == 1),
-            colors=color_map,
-        )
-
-    doc.add_paragraph()
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # DETALLE DE INCUMPLIMIENTOS — REFERENCIAS NORMATIVAS
-    # ──────────────────────────────────────────────────────────────────────────
-    non_compliant = [o for o in observations if not o.complies]
-
-    if non_compliant:
-        h_nc = doc.add_heading("3. Detalle de Incumplimientos — Referencias Normativas", level=1)
-        h_nc.runs[0].font.color.rgb = _BLUE_DARK
-
-        intro = doc.add_paragraph()
-        intro.add_run(
-            f"Se detallan a continuación los {len(non_compliant)} parámetros que no cumplen "
-            "con la normativa DOTD Louisiana Road Design Manual. Cada ítem incluye la referencia "
-            "exacta de documento, capítulo y sección aplicable."
-        ).font.size = Pt(9.5)
-
-        doc.add_paragraph()
-
-        for i, obs in enumerate(non_compliant, start=1):
-            sev = obs.severity or "informativo"
-            sev_label = _SEVERITY_LABEL.get(sev, sev.upper())
-            sev_color = _SEVERITY_COLOR.get(sev, _BLUE_MID)
-            sev_bg    = _SEVERITY_BG.get(sev, _GRAY_LIGHT)
-
-            ref_doc, ref_chap, ref_sec, ref_title, ref_value = _parse_normative_ref(obs)
-
-            # Título del ítem
-            h_item = doc.add_heading(level=2)
-            h_item.clear()
-            r_num = h_item.add_run(f"{i}. ")
-            r_num.font.color.rgb = _BLUE_MID
-            r_num.font.size = Pt(11)
-            r_param = h_item.add_run(obs.parameter)
-            r_param.font.color.rgb = _BLUE_MID
-            r_param.font.size = Pt(11)
-            r_badge = h_item.add_run(f"  [{sev_label}]")
-            r_badge.font.color.rgb = sev_color
-            r_badge.font.size = Pt(9)
-
-            # Bloque "Referencia Normativa" — tabla de 1 celda con fondo coloreado
-            ref_tbl = doc.add_table(rows=1, cols=1)
-            ref_tbl.style = "Table Grid"
-            ref_cell = ref_tbl.rows[0].cells[0]
-            ref_cell.width = Cm(15.5)
-            _set_cell_bg(ref_cell, sev_bg)
-
-            # Línea 1: etiqueta + documento
-            p_ref = ref_cell.paragraphs[0]
-            p_ref.paragraph_format.space_before = Pt(4)
-            p_ref.paragraph_format.space_after  = Pt(2)
-            r_label = p_ref.add_run("Referencia Normativa:  ")
-            r_label.bold = True
-            r_label.font.size = Pt(9)
-            r_label.font.color.rgb = _BLUE_DARK
-            r_doc = p_ref.add_run(ref_doc)
-            r_doc.font.size = Pt(9)
-
-            # Línea 2: capítulo + sección + título
-            p_sec = ref_cell.add_paragraph()
-            p_sec.paragraph_format.space_before = Pt(1)
-            p_sec.paragraph_format.space_after  = Pt(2)
-            r_chap = p_sec.add_run(f"{ref_chap}, {ref_sec} — {ref_title}")
-            r_chap.font.size = Pt(9)
-            r_chap.bold = True
-            r_chap.font.color.rgb = _BLUE_DARK
-
-            # Línea 3: valor requerido
-            p_val = ref_cell.add_paragraph()
-            p_val.paragraph_format.space_before = Pt(1)
-            p_val.paragraph_format.space_after  = Pt(4)
-            r_vl = p_val.add_run("Parámetro requerido:  ")
-            r_vl.bold = True
-            r_vl.font.size = Pt(8.5)
-            r_val = p_val.add_run(ref_value)
-            r_val.font.size = Pt(8.5)
-
-            # Valor encontrado + observación
-            p_found = doc.add_paragraph()
-            p_found.paragraph_format.space_before = Pt(3)
-            r_fl = p_found.add_run("Valor encontrado:  ")
-            r_fl.bold = True
-            r_fl.font.size = Pt(9)
-            r_fl.font.color.rgb = sev_color
-            r_fv = p_found.add_run(obs.found_value)
-            r_fv.font.size = Pt(9)
-
-            if obs.observation:
-                p_obs = doc.add_paragraph()
-                p_obs.paragraph_format.space_before = Pt(2)
-                r_ol = p_obs.add_run("Observación:  ")
-                r_ol.bold = True
-                r_ol.font.size = Pt(9)
-                r_ov = p_obs.add_run(obs.observation)
-                r_ov.font.size = Pt(9)
-                r_ov.font.color.rgb = sev_color
-
-            doc.add_paragraph()
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # CAMBIOS ENTRE VERSIONES (opcional)
-    # ──────────────────────────────────────────────────────────────────────────
-    if changes:
-        h3 = doc.add_heading("4. Cambios Entre Versiones", level=1)
-        h3.runs[0].font.color.rgb = _BLUE_DARK
-
-        _IMPACT_COLORS = {
-            "crítico":     _RED,
-            "moderado":    _ORANGE,
-            "informativo": _BLUE_MID,
-        }
-        _CHANGE_LABELS = {
-            "modificado": "Modificado",
-            "agregado":   "Agregado",
-            "eliminado":  "Eliminado",
-        }
-
-        cols_chg = ["Ubicación", "Tipo de Cambio", "Descripción", "Impacto"]
-        widths_chg = [3.5, 3.0, 8.0, 2.5]
-
-        tbl_chg = doc.add_table(rows=1, cols=len(cols_chg))
-        tbl_chg.style = "Table Grid"
-        _header_row(tbl_chg, *cols_chg)
-        _set_column_widths(tbl_chg, widths_chg)
-
-        for idx, chg in enumerate(changes):
-            impact_color = _IMPACT_COLORS.get(chg.impact, _BLUE_MID)
-            _data_row(
-                tbl_chg,
-                [chg.location, _CHANGE_LABELS[chg.change_type], chg.description, chg.impact],
-                even=(idx % 2 == 1),
-                colors={3: impact_color},
-            )
-
-        doc.add_paragraph()
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Serialize
-    # ──────────────────────────────────────────────────────────────────────────
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
