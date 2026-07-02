@@ -17,3 +17,8 @@ build/
 
 # herramientas internas
 .claude/
+
+# scripts de exploración con credenciales
+itwin_explore.py
+diag_report.py
+diag_informe_preview.html

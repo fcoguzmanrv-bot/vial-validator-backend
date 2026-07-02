@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="iso-8859-1" ?>
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.landxml.org/schema/LandXML-1.0 http://www.landxml.org/schema/landxml-1.0/LandXML-1.0.xsd" version="1.0" date="2017-08-14" time="11:12:10">
+  <Project name="COSTANERA-C">
+    <Feature code="GridScaleFactor">
+      <Property label="GridScaleFactor" value="1.000000000000"/>
+    </Feature>
+  </Project>
+  <Units>
+    <Metric areaUnit="squareMeter" linearUnit="meter" volumeUnit="cubicMeter" temperatureUnit="celsius" pressureUnit="HPA"/>
+  </Units>
+  <Application name="Bentley InRoads V8i (SELECTseries 2)" manufacturer="Bentley Systems, Inc." version="08.11.07.542" manufacturerURL="www.bentley.com"/>
+  <Alignments>
+    <Alignment name="Eje_AVO NORTE" length="1304.0443413" staStart="0.0000000" desc="Entrega Costanera" state="proposed">
+      <CoordGeom name="Eje_AVO NORTE" desc="Entrega Costanera" state="proposed">
+        <Line length="160.2499404" dir="5.896400875" staStart="0.0000000">
+          <Start code="ORPRO ">
+              3301265.950000 191961.799000 0.000000
+          </Start>
+          <End code="TE= ">
+              3301414.361764 191901.350744 0.000000
+          </End>
+          <Feature code="Line">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Line>
+        <Spiral length="67.8230000" radiusEnd="310.0000000" radiusStart="INF" rot="cw" spiType="clothoid" dirStart="5.896400875" dirEnd="6.005792811" staStart="160.2499404" constant="145.0004483" theta="0.109391935" totalY="2.4709779" totalX="67.7418839" tanLong="45.2437574" tanShort="22.6334140">
+          <Start code="TE= ">
+              3301414.361764 191901.350744 0.000000
+          </Start>
+          <PI code="PI">
+              3301456.263220 191884.284240 0.000000
+          </PI>
+          <End code="TE=">
+              3301478.031421 191878.086108 0.000000
+          </End>
+          <Feature code="Spiral">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Spiral>
+        <Curve rot="cw" crvType="arc" length="205.0426181" chord="201.3253619" dirStart="6.005792811" dirEnd="0.384035304" staStart="228.0729404" radius="310.0000000">
+          <Start code="TE=">
+              3301478.031421 191878.086108 0.000000
+          </Start>
+          <Center code="CC">
+              3301562.924536 192176.235666 0.000000
+          </Center>
+          <End code="TS=  ">
+              3301679.070650 191888.815972 0.000000
+          </End>
+          <Feature code="Curve">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Curve>
+        <Spiral length="67.8230000" radiusEnd="INF" radiusStart="310.0000000" rot="cw" spiType="clothoid" dirStart="0.384035304" dirEnd="0.493427239" staStart="433.1155585" constant="145.0004483" theta="0.109391935" totalY="2.4709779" totalX="67.7418839" tanLong="45.2437574" tanShort="22.6334140">
+          <Start code="TS=  ">
+              3301679.070650 191888.815972 0.000000
+          </Start>
+          <PI code="PI">
+              3301700.055453 191897.295918 0.000000
+          </PI>
+          <End code="TS=">
+              3301739.902296 191918.725492 0.000000
+          </End>
+          <Feature code="Spiral">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Spiral>
+        <Line length="5.5048673" dir="0.493427239" staStart="500.9385585">
+          <Start code="TS=">
+              3301739.902296 191918.725492 0.000000
+          </Start>
+          <End code="TE= ">
+              3301744.750514 191921.332856 0.000000
+          </End>
+          <Feature code="Line">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Line>
+        <Spiral length="66.7460000" radiusEnd="315.0000000" radiusStart="INF" rot="ccw" spiType="clothoid" dirStart="0.493427239" dirEnd="0.387481208" staStart="506.4434258" constant="144.9999655" theta="0.105946032" totalY="2.3552639" totalX="66.6711195" tanLong="44.5235696" tanShort="22.2724321">
+          <Start code="TE= ">
+              3301744.750514 191921.332856 0.000000
+          </Start>
+          <PI code="PI">
+              3301783.963078 191942.421315 0.000000
+          </PI>
+          <End code="TE=">
+              3301804.584315 191950.837122 0.000000
+          </End>
+          <Feature code="Spiral">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Spiral>
+        <Curve rot="ccw" crvType="arc" length="156.2583851" chord="154.6611763" dirStart="0.387481208" dirEnd="6.174608149" staStart="573.1894258" radius="315.0000000">
+          <Start code="TE=">
+              3301804.584315 191950.837122 0.000000
+          </Start>
+          <Center code="CC">
+              3301923.609446 191659.190043 0.000000
+          </Center>
+          <End code="TS=  ">
+              3301957.744089 191972.335099 0.000000
+          </End>
+          <Feature code="Curve">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Curve>
+        <Spiral length="66.7460000" radiusEnd="INF" radiusStart="315.0000000" rot="ccw" spiType="clothoid" dirStart="6.174608149" dirEnd="6.068662118" staStart="729.4478109" constant="144.9999655" theta="0.105946032" totalY="2.3552639" totalX="66.6711195" tanLong="44.5235696" tanShort="22.2724321">
+          <Start code="TS=  ">
+              3301957.744089 191972.335099 0.000000
+          </Start>
+          <PI code="PI">
+              3301979.885366 191969.921571 0.000000
+          </PI>
+          <End code="TS=">
+              3302023.388366 191960.443323 0.000000
+          </End>
+          <Feature code="Spiral">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Spiral>
+        <Line length="164.3877592" dir="6.068662118" staStart="796.1938109">
+          <Start code="TS=">
+              3302023.388366 191960.443323 0.000000
+          </Start>
+          <End code="TE= ">
+              3302184.008031 191925.448199 0.000000
+          </End>
+          <Feature code="Line">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Line>
+        <Curve rot="ccw" crvType="arc" length="317.0248326" chord="317.0115567" dirStart="6.068662118" dirEnd="6.036959634" staStart="960.5815701" radius="10000.0000000">
+          <Start code="TE= ">
+              3302184.008031 191925.448199 0.000000
+          </Start>
+          <Center code="CC">
+              3300055.192316 182154.668104 0.000000
+          </Center>
+          <End code="TS= ">
+              3302492.644448 191853.061121 0.000000
+          </End>
+          <Feature code="Curve">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Curve>
+        <Line length="26.4379387" dir="6.036959634" staStart="1277.6064026">
+          <Start code="TS= ">
+              3302492.644448 191853.061121 0.000000
+          </Start>
+          <End code="FINPRO ">
+              3302518.285000 191846.617000 0.000000
+          </End>
+          <Feature code="Line">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </Line>
+      </CoordGeom>
+      <Profile>
+        <ProfAlign name="Eje_AVO_NORTE_RAS_NORT-SUP" desc="Entrega Costanera">
+          <PVI>
+              0.000000 641.838000
+          </PVI>
+          <ParaCurve length="100.0000000">
+              50.770000 641.000000
+          </ParaCurve>
+          <ParaCurve length="80.0000000">
+              752.068000 636.384000
+          </ParaCurve>
+          <ParaCurve length="140.0000000">
+              1159.693000 652.979000
+          </ParaCurve>
+          <PVI>
+              1304.044000 654.380000
+          </PVI>
+          <Feature code="ProfAlign">
+            <Property label="style" value="Eje_A"/>
+          </Feature>
+        </ProfAlign>
+      </Profile>
+      <Feature code="Alignment">
+        <Property label="style" value="Eje_A"/>
+        <Property label="guid" value="64b10747-c8a1-4309-9480-674fcd4bc7d1"/>
+      </Feature>
+    </Alignment>
+  </Alignments>
+</LandXML>
